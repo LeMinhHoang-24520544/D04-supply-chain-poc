@@ -1,0 +1,12 @@
+{
+  "name": "uit-core-auth",
+  "version": "99.9.9",
+  "description": "PoC Dependency Confusion - Phien ban ma doc",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["malicious", "dependency-confusion", "poc"],
+  "author": "Nhom 2",
+  "license": "ISC"
+}

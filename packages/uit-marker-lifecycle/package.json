@@ -1,0 +1,13 @@
+{
+  "name": "uit-marker-lifecycle",
+  "version": "1.0.0",
+  "description": "PoC Lifecycle Script Injection",
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "echo 'May da bi hack boi Nhom 2' > /tmp/flag.txt",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["malicious", "lifecycle", "poc"],
+  "author": "Nhom 2",
+  "license": "ISC"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "uit-benign",
+  "version": "1.0.0",
+  "description": "Clear version",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Nhom 2",
+  "license": "ISC"
+}

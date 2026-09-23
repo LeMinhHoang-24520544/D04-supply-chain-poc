@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  verdaccio:
+    image: verdaccio/verdaccio:latest
+    container_name: local-registry
+    ports:
+      - "4873:4873"
+    volumes:
+      - ./registry:/verdaccio/storage
+    networks:
+      - lab-network
+
+  consumer:
+    image: node:18-alpine
+    container_name: victim-consumer
+    command: tail -f /dev/null
+    networks:
+      - lab-network
+
+networks:
+  lab-network:
+    driver: bridge

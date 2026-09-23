@@ -1,0 +1,8 @@
+{
+  "name": "uit-marker-tamper",
+  "version": "1.0.0",
+  "description": "PoC Hash Tampering - Loi toan ven du lieu",
+  "main": "index.js",
+  "author": "Nhom 2",
+  "license": "ISC"
+}
