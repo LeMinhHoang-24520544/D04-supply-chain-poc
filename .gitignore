@@ -6,4 +6,10 @@ registry/data/
 registry/verdaccio-audit.log
 .DS_Store
 registry/htpasswd
-registry/htpasswd
+generated_packages/
+__pycache__/
+*.pyc
+
+.vscode/
+
+.env
