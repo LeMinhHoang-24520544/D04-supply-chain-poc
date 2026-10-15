@@ -1,12 +1,13 @@
 {
   "name": "uit-benign",
   "version": "1.0.0",
-  "description": "Clear version",
+  "description": "Benign reference package for False Positive rate baseline testing",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "echo 'Compiling harmless assets...'",
+    "test": "node -e \"const m = require('./index.js'); console.log(m.greet('Auditor'));\""
   },
-  "keywords": [],
-  "author": "Nhom 2",
+  "keywords": ["uit", "benign", "baseline"],
+  "author": "Nhom D04 - NT230",
   "license": "ISC"
 }

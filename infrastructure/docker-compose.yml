@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  local-registry:
+    image: verdaccio/verdaccio:latest
+    container_name: local-registry
+    ports:
+      - "4873:4873"
+    volumes:
+      - ./verdaccio/config.yaml:/verdaccio/conf/config.yaml:ro
+      - ./storage:/verdaccio/storage
+    networks:
+      - lab-network
+    restart: unless-stopped
+
+  victim-consumer:
+    build:
+      context: ./victim-consumer
+      dockerfile: Dockerfile
+    container_name: victim-consumer
+    depends_on:
+      - local-registry
+    networks:
+      - lab-network
+    volumes:
+      - ../logs:/app/logs
+    command: tail -f /dev/null
+
+networks:
+  lab-network:
+    driver: bridge

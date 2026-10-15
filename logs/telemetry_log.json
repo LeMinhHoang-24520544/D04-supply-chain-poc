@@ -1,0 +1,2606 @@
+{
+  "summary": {
+    "total_packages": 100,
+    "risk_threshold": 35,
+    "confusion_matrix": {
+      "TP (True Positive)": 53,
+      "FP (False Positive)": 0,
+      "TN (True Negative)": 47,
+      "FN (False Negative)": 0
+    },
+    "metrics": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "fpr": 0.0,
+      "accuracy": 1.0
+    },
+    "trade_off_analysis": {
+      "whitelist_enabled": {
+        "FP": 0,
+        "FPR": "0.00%",
+        "Precision": "100.00%",
+        "Recall": "100.00%",
+        "F1": "100.00%"
+      },
+      "whitelist_disabled": {
+        "FP": 15,
+        "FPR": "31.91%",
+        "Precision": "77.94%",
+        "Recall": "100.00%",
+        "F1": "87.60%"
+      },
+      "trade_off_conclusion": "Enabling Layer 1 Whitelist successfully reduces the False Positive Rate (FPR) on benign build-hook libraries without sacrificing True Positive Recall on malicious lifecycle injections."
+    },
+    "category_detection_rates": {
+      "lifecycle_injection": {
+        "total": 18,
+        "detected_malicious": 18,
+        "detected_benign": 0
+      },
+      "benign": {
+        "total": 47,
+        "detected_malicious": 0,
+        "detected_benign": 47
+      },
+      "evasive_obfuscation": {
+        "total": 20,
+        "detected_malicious": 20,
+        "detected_benign": 0
+      },
+      "dependency_confusion": {
+        "total": 15,
+        "detected_malicious": 15,
+        "detected_benign": 0
+      }
+    }
+  },
+  "telemetry_stream": [
+    {
+      "package_name": "uit-pkg-0001",
+      "version": "1.0.1",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0001",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: echo '[MOCK] Simulating external request...' > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0002",
+      "version": "3.10.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0002",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-pre-gyp install --fallback-to-build' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0003",
+      "version": "2.11.18",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0003",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-gyp rebuild' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0004",
+      "version": "2.6.21",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0004",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0005",
+      "version": "2.0.4",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0005",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0006",
+      "version": "100.2.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0006",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '100.2.3' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0007",
+      "version": "2.3.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0007",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0008",
+      "version": "2.3.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0008",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0009",
+      "version": "1.11.24",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0009",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'tsc -p tsconfig.json' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0010",
+      "version": "2.4.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0010",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0011",
+      "version": "100.4.4",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0011",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '100.4.4' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0012",
+      "version": "2.1.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0012",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0013",
+      "version": "2.3.4",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0013",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0014",
+      "version": "2.3.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0014",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'tsc -p tsconfig.json' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0015",
+      "version": "0.7.5",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0015",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0016",
+      "version": "3.4.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0016",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0017",
+      "version": "2.1.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0017",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0018",
+      "version": "1.2.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0018",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0019",
+      "version": "0.6.16",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0019",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0020",
+      "version": "2.0.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0020",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0021",
+      "version": "2.1.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0021",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0022",
+      "version": "99.0.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0022",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '99.0.3' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0023",
+      "version": "2.13.19",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0023",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0024",
+      "version": "2.2.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0024",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0025",
+      "version": "1.12.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0025",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0026",
+      "version": "1.8.1",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0026",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'esbuild src/index.js --bundle --outfile=dist/bundle.js' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0027",
+      "version": "0.6.11",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0027",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0028",
+      "version": "2.2.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0028",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0029",
+      "version": "1.13.25",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0029",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0030",
+      "version": "1.2.17",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0030",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0031",
+      "version": "3.13.20",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0031",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0032",
+      "version": "100.5.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0032",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '100.5.9' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0033",
+      "version": "1.15.14",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0033",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0034",
+      "version": "2.10.17",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0034",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-gyp clean' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0035",
+      "version": "0.12.15",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0035",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-pre-gyp install --fallback-to-build' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0036",
+      "version": "2.13.15",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0036",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-pre-gyp install --fallback-to-build' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0037",
+      "version": "1.0.14",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0037",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: node -e \"const fs = require('fs'); fs.existsSync('./package.json');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0038",
+      "version": "3.0.23",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0038",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0039",
+      "version": "2.1.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0039",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0040",
+      "version": "1.0.19",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0040",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0041",
+      "version": "1.5.20",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0041",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: node -e \"console.log('[D04 SAFE MARKER] Benign execution telemetry recorded');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0042",
+      "version": "3.4.13",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0042",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'tsc -p tsconfig.json' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0043",
+      "version": "2.0.5",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0043",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0044",
+      "version": "2.8.19",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0044",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0045",
+      "version": "3.0.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0045",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0046",
+      "version": "2.9.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0046",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-gyp clean' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0047",
+      "version": "2.7.11",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0047",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-gyp rebuild' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0048",
+      "version": "999.3.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0048",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '999.3.8' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0049",
+      "version": "0.13.19",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0049",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0050",
+      "version": "1.1.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0050",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: install",
+          "severity": "HIGH",
+          "detail": "Detected active 'install' hook with command: node -e \"console.log('[D04 SAFE MARKER] Benign execution telemetry recorded');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0051",
+      "version": "3.2.21",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0051",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-pre-gyp install --fallback-to-build' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0052",
+      "version": "99.1.5",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0052",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '99.1.5' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0053",
+      "version": "2.0.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0053",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'tsc -p tsconfig.json' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0054",
+      "version": "1.4.14",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0054",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node -e \"const fs = require('fs'); fs.existsSync('./package.json');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0055",
+      "version": "2.4.1",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0055",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0056",
+      "version": "1.11.19",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0056",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0057",
+      "version": "1.5.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0057",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: install",
+          "severity": "HIGH",
+          "detail": "Detected active 'install' hook with command: node -e \"console.log('[D04 SAFE MARKER] Benign execution telemetry recorded');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0058",
+      "version": "1.4.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0058",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: install",
+          "severity": "HIGH",
+          "detail": "Detected active 'install' hook with command: node -e \"const fs = require('fs'); fs.existsSync('./package.json');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0059",
+      "version": "2.2.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0059",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0060",
+      "version": "95.3.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0060",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '95.3.6' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0061",
+      "version": "2.1.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0061",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0062",
+      "version": "2.2.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0062",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0063",
+      "version": "1.4.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0063",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0064",
+      "version": "2.2.1",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0064",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0065",
+      "version": "3.4.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0065",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0066",
+      "version": "3.8.14",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0066",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0067",
+      "version": "2.0.18",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0067",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0068",
+      "version": "100.5.4",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0068",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '100.5.4' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0069",
+      "version": "999.5.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0069",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '999.5.7' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0070",
+      "version": "0.4.24",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0070",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0071",
+      "version": "2.3.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0071",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0072",
+      "version": "1.5.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0072",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node -e \"const fs = require('fs'); fs.existsSync('./package.json');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0073",
+      "version": "2.3.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0073",
+      "verdict": "MALICIOUS",
+      "risk_score": 65,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 25,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0074",
+      "version": "1.2.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0074",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0075",
+      "version": "2.6.3",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0075",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0076",
+      "version": "99.4.4",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0076",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '99.4.4' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0077",
+      "version": "100.0.6",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0077",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '100.0.6' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0078",
+      "version": "0.9.14",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0078",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0079",
+      "version": "0.4.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0079",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0080",
+      "version": "1.3.15",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0080",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: node -e \"const fs = require('fs'); fs.existsSync('./package.json');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0081",
+      "version": "0.2.2",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0081",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-gyp rebuild' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0082",
+      "version": "99.2.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0082",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '99.2.10' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0083",
+      "version": "2.0.5",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0083",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0084",
+      "version": "95.3.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0084",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '95.3.8' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0085",
+      "version": "1.3.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0085",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: node -e \"console.log('[D04 SAFE MARKER] Benign execution telemetry recorded');\""
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0086",
+      "version": "2.6.24",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0086",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Whitelisted Hook: install",
+          "severity": "INFO",
+          "detail": "Command 'node-pre-gyp install --fallback-to-build' matches whitelist rule."
+        }
+      ],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0087",
+      "version": "0.13.0",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0087",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0088",
+      "version": "2.2.13",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0088",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0089",
+      "version": "1.11.11",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0089",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0090",
+      "version": "95.4.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0090",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '95.4.10' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0091",
+      "version": "1.2.17",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0091",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: preinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'preinstall' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0092",
+      "version": "3.6.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0092",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0093",
+      "version": "3.14.16",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0093",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0094",
+      "version": "0.12.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0094",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0095",
+      "version": "2.1.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0095",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0096",
+      "version": "2.0.11",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0096",
+      "verdict": "BENIGN",
+      "risk_score": 0,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 0,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "classification": "TN",
+      "ground_truth": "BENIGN",
+      "category": "benign"
+    },
+    {
+      "package_name": "uit-pkg-0097",
+      "version": "2.2.10",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0097",
+      "verdict": "MALICIOUS",
+      "risk_score": 110,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 70,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Obfuscation / Dynamic Exec Pattern",
+          "severity": "CRITICAL",
+          "detail": "Dynamic evaluation of Base64 encoded buffer detected in index.js (Matches: 1)"
+        },
+        {
+          "layer": "Layer 2 - Source Code",
+          "rule": "Long Encoded String Artifact",
+          "severity": "HIGH",
+          "detail": "Found 1 long Base64 string literal(s) in index.js"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "evasive_obfuscation"
+    },
+    {
+      "package_name": "uit-pkg-0098",
+      "version": "1.5.8",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0098",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: install",
+          "severity": "HIGH",
+          "detail": "Detected active 'install' hook with command: cat package.json | grep name > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    },
+    {
+      "package_name": "uit-pkg-0099",
+      "version": "95.2.7",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0099",
+      "verdict": "MALICIOUS",
+      "risk_score": 90,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 90,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: postinstall",
+          "severity": "HIGH",
+          "detail": "Detected active 'postinstall' hook with command: node index.js"
+        },
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Dependency Confusion Indicator",
+          "severity": "CRITICAL",
+          "detail": "Abnormally high major version '95.2.7' (>= 90.0)"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "dependency_confusion"
+    },
+    {
+      "package_name": "uit-pkg-0100",
+      "version": "1.1.9",
+      "package_path": "C:\\D04-supply-chain-poc\\generated_packages\\uit-pkg-0100",
+      "verdict": "MALICIOUS",
+      "risk_score": 40,
+      "threshold": 35,
+      "layer_scores": {
+        "layer_1_manifest": 40,
+        "layer_2_source": 0,
+        "layer_3_behavioral": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "layer": "Layer 1 - Manifest",
+          "rule": "Suspicious Lifecycle Hook: install",
+          "severity": "HIGH",
+          "detail": "Detected active 'install' hook with command: echo '[MOCK] Simulating external request...' > /dev/null"
+        }
+      ],
+      "classification": "TP",
+      "ground_truth": "MALICIOUS",
+      "category": "lifecycle_injection"
+    }
+  ]
+}

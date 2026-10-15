@@ -1,15 +1,31 @@
+# Node & Package Manager Artifacts
 node_modules/
 .npm/
 npm-debug.log*
 yarn-error.log*
-registry/data/
-registry/verdaccio-audit.log
-.DS_Store
-registry/htpasswd
-generated_packages/
+package-lock.json
+
+# Local Registry & Storage Data
+infrastructure/storage/
+infrastructure/verdaccio/storage/
+registry/
+*.tgz
+packages/**/dist/
+
+# Python Runtime & Cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
 
+# Synthetic Datasets & Temporary Build Outputs
+generated_packages/
+
+# System & IDE Specific Files
+.DS_Store
+Thumbs.db
 .vscode/
-
+.idea/
 .env

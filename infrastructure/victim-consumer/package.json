@@ -1,0 +1,13 @@
+{
+  "name": "enterprise-fintech-portal",
+  "version": "2.4.0",
+  "description": "Enterprise Victim Portal simulating dependency consumption",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "uit-core-auth": "^1.0.0"
+  },
+  "author": "Enterprise Corp"
+}
