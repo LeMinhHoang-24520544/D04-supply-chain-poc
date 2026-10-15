@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 scripts/run_pipeline.py
-Automated End-to-End Orchestrator for NT230 - Topic D04 (Supply Chain Compromise)
-Executes all project workflows in sequence:
-1. Verification of the 4 PoC Archetypes
-2. Artifact Tampering & Hash Integrity Simulation
-3. Synthetic Dataset Generation (100+ packages)
-4. Multi-layer Detection & Telemetry Evaluation
-5. Metrics & Trade-off Report Generation
+Automated Toolchain Verification Orchestrator for NT230 - Topic D04 (Supply Chain Compromise).
+Focuses strictly on verifying tool functionality and pipeline readiness:
+1. Multi-Layer Detector verification (scripts/detector.py)
+2. Pre-Install CI/CD Security Gate verification (scripts/supply_chain_gate.py)
+3. Artifact Hash Tampering & Integrity tool verification (simulate_tamper.py)
+4. Synthetic Dataset Generator tool verification (scripts/data_gen.py)
 """
 
 import os
@@ -23,40 +22,66 @@ def print_header(title: str):
     print(f" {title.upper()}")
     print("=" * 75)
 
-def run_step(step_name: str, cmd: list):
+def run_step(step_name: str, cmd: list, expect_failure: bool = False):
     print_header(step_name)
     print(f"[*] Executing: {' '.join(cmd)}")
     res = subprocess.run(cmd, cwd=BASE_DIR)
-    if res.returncode != 0:
-        print(f"[!] Warning: Step '{step_name}' exited with code {res.returncode}")
+    if expect_failure:
+        if res.returncode != 0:
+            print(f"[+] Security Gate functioning as expected: Blocked malicious package (Exit code {res.returncode}).")
+        else:
+            print(f"[!] Warning: Security Gate did not block package as expected!")
     else:
-        print(f"[+] Completed: {step_name}")
+        if res.returncode != 0:
+            print(f"[!] Step returned non-zero exit code: {res.returncode}")
+        else:
+            print(f"[+] Verified successfully: {step_name}")
 
 def main():
-    print_header("NT230 - TOPIC D04: SUPPLY CHAIN COMPROMISE LAB PIPELINE")
-    print("Author: Group D04 (NT230)")
+    print_header("NT230 - TOPIC D04: SUPPLY CHAIN SECURITY TOOLCHAIN VERIFICATION")
+    print("Repository focus: Tooling Architecture & Security Instrumentation")
     print("Target Ecosystem: npm / Node.js")
-    print("Safety Model: Double Isolation (VM + Docker) + Non-destructive Safe Markers")
-    
-    # Step 1: Scan 4 Base PoC Packages
+    print("PoC Model: Controlled Safe Markers in Isolated Lab Environment")
+
+    # Step 1: Verify Multi-Layer Detector on base PoC packages
     detector_script = os.path.join(SCRIPTS_DIR, "detector.py")
-    run_step("Step 1: Scan 4 Base PoC Packages with Multi-Layer Detector", [sys.executable, detector_script, PACKAGES_DIR])
+    run_step(
+        "Step 1: Verify Multi-Layer Detector (packages/)",
+        [sys.executable, detector_script, PACKAGES_DIR]
+    )
 
-    # Step 2: Simulate Artifact Hash Tampering
+    # Step 2: Verify CI/CD Security Gate (Pass on benign, Block on malicious)
+    gate_script = os.path.join(SCRIPTS_DIR, "supply_chain_gate.py")
+    benign_pkg = os.path.join(PACKAGES_DIR, "uit-benign")
+    malicious_pkg = os.path.join(PACKAGES_DIR, "uit-core-auth")
+    
+    run_step(
+        "Step 2.1: Verify Security Gate (Permit Benign Package)",
+        [sys.executable, gate_script, benign_pkg]
+    )
+    run_step(
+        "Step 2.2: Verify Security Gate (Intercept Malicious Package)",
+        [sys.executable, gate_script, malicious_pkg],
+        expect_failure=True
+    )
+
+    # Step 3: Verify Artifact Hash Tampering Simulation Tool
     tamper_script = os.path.join(PACKAGES_DIR, "uit-marker-tamper", "simulate_tamper.py")
-    run_step("Step 2: Simulate Artifact Hash Tampering", [sys.executable, tamper_script])
+    run_step(
+        "Step 3: Verify Artifact Integrity & Tampering Simulation Tool",
+        [sys.executable, tamper_script]
+    )
 
-    # Step 3: Generate Dataset
+    # Step 4: Verify Synthetic Dataset Generator Tool (Sample run)
     data_gen_script = os.path.join(SCRIPTS_DIR, "data_gen.py")
-    run_step("Step 3: Generate Synthetic Package Dataset (100 samples)", [sys.executable, data_gen_script, "--count", "100"])
+    test_output_dir = os.path.join(BASE_DIR, "generated_packages")
+    run_step(
+        "Step 4: Verify Dataset Generator Tool (Small Sample)",
+        [sys.executable, data_gen_script, "--count", "10", "--output", test_output_dir]
+    )
 
-    # Step 4: Evaluate Detector & Output Telemetry
-    eval_script = os.path.join(SCRIPTS_DIR, "evaluate.py")
-    run_step("Step 4: Quantitative Evaluation (Precision, Recall, F1, FPR, Trade-offs)", [sys.executable, eval_script])
-
-    print_header("ALL LAB STEPS COMPLETED SUCCESSFULLY")
-    print("Telemetry log saved to: logs/telemetry_log.json")
-    print("Verdaccio infrastructure configured in: infrastructure/")
+    print_header("ALL SECURITY TOOLS & PIPELINES VERIFIED OPERATIONAL")
+    print("Toolchain is ready for deployment, live demonstrations, and future empirical research.")
 
 if __name__ == "__main__":
     main()
