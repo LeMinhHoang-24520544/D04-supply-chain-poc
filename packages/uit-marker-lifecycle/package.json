@@ -1,13 +1,13 @@
 {
   "name": "uit-marker-lifecycle",
   "version": "1.0.0",
-  "description": "PoC Lifecycle Script Injection",
+  "description": "PoC Lifecycle Script Injection (Safe Marker for NT230 Lab)",
   "main": "index.js",
   "scripts": {
-    "preinstall": "echo 'May da bi hack boi Nhom 2' > /tmp/flag.txt",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "preinstall": "node -e \"const fs = require('fs'); const os = require('os'); const logPath = os.platform() === 'win32' ? 'C:\\\\Users\\\\Public\\\\uit_marker_lifecycle.log' : '/tmp/uit_marker_lifecycle.log'; fs.writeFileSync(logPath, '[SECURITY AUDIT] uit-marker-lifecycle triggered at ' + new Date().toISOString() + '\\n'); console.log('[D04 AUDIT MARKER] Lifecycle preinstall hook executed safely.');\"",
+    "test": "node index.js"
   },
-  "keywords": ["malicious", "lifecycle", "poc"],
-  "author": "Nhom 2",
+  "keywords": ["malicious", "lifecycle", "poc", "safe-marker"],
+  "author": "Nhom D04 - NT230",
   "license": "ISC"
 }

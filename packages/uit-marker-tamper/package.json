@@ -1,8 +1,12 @@
 {
   "name": "uit-marker-tamper",
   "version": "1.0.0",
-  "description": "PoC Hash Tampering - Loi toan ven du lieu",
+  "description": "PoC Artifact Hash Tampering (Data Integrity Breach Marker for NT230)",
   "main": "index.js",
-  "author": "Nhom 2",
+  "scripts": {
+    "test": "node index.js"
+  },
+  "keywords": ["malicious", "hash-tampering", "integrity", "poc"],
+  "author": "Nhom D04 - NT230",
   "license": "ISC"
 }
