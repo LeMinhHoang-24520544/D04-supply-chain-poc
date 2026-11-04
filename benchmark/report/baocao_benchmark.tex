@@ -1,0 +1,147 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage{amsmath}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{booktabs,array,graphicx,float,caption}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+\usepackage{setspace}
+\setstretch{1.15}
+\renewcommand{\abstractname}{Tóm tắt}
+\renewcommand{\tablename}{Bảng}
+\renewcommand{\figurename}{Hình}
+
+\title{\textbf{Đánh giá định lượng bộ phát hiện chuỗi cung ứng npm}\\[2pt]
+\large NT230 -- Đề tài D04: Supply Chain Compromise}
+\author{Nhóm 02}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Báo cáo trình bày phương pháp và kết quả đo hiệu năng của bộ phát hiện đa lớp \texttt{detector.py} trên hai tập dữ liệu: tập tổng hợp do \texttt{data\_gen.py} sinh ra và tập gồm 1\,000 gói npm thật (500 gói độc hại, 500 gói phổ biến). Trên tập tổng hợp, detector đạt Precision, Recall và F1 đều bằng 100\%. Trên dữ liệu thật, các chỉ số giảm còn Precision 78{,}9\%, Recall 66{,}6\%, F1 72{,}2\% và FPR 17{,}8\%. Phân tích theo từng lớp cho thấy Layer~1 (siêu dữ liệu) một mình cho F1 cao hơn toàn hệ thống, Layer~2 gây phần lớn báo động nhầm và Layer~3 không đóng góp phát hiện nào.
+\end{abstract}
+
+\section{Mục tiêu và chỉ số}
+Mục tiêu là đo khả năng phân biệt gói độc hại với gói sạch của detector và phân tích sự đánh đổi giữa tỷ lệ phát hiện và tỷ lệ báo động nhầm. Mỗi gói được gán nhãn \textit{MALICIOUS} khi tổng điểm rủi ro đạt ngưỡng (mặc định 35). Với TP, FP, TN, FN là số gói tương ứng trong ma trận nhầm lẫn:
+\begin{align*}
+\text{Precision} &= \frac{TP}{TP+FP}, &
+\text{Recall} &= \frac{TP}{TP+FN},\\
+F_1 &= \frac{2\cdot \text{Precision}\cdot\text{Recall}}{\text{Precision}+\text{Recall}}, &
+\text{FPR} &= \frac{FP}{FP+TN}.
+\end{align*}
+
+\section{Dữ liệu thử nghiệm}
+\subsection{Tập tổng hợp}
+Sinh bằng \texttt{data\_gen.py} (seed 42), gồm 1\,000 gói: 555 sạch, 155 chèn hook vòng đời, 151 Dependency Confusion và 139 làm rối mã Base64. Nhãn lấy từ \texttt{ground\_truth.json}. Mẫu độc do cùng nhóm viết nên có lệch (bias) so với luật của detector.
+
+\subsection{Tập dữ liệu thật}
+Gồm 1\,000 gói, tỷ lệ 50/50:
+\begin{itemize}
+  \item \textbf{500 gói độc hại}: lấy ngẫu nhiên (seed cố định) từ kho \textit{DataDog malicious-software-packages-dataset}, mục npm. Gồm 467 gói \texttt{malicious\_intent} và 33 gói \texttt{compromised\_lib} (thư viện hợp lệ bị chèn mã độc).
+  \item \textbf{500 gói sạch}: các gói npm được xếp hạng phổ biến nhất theo công cụ tìm kiếm của npm registry, tải trực tiếp bằng tệp \texttt{.tgz} (không chạy \texttt{npm install}, không thực thi script cài đặt).
+\end{itemize}
+Mẫu độc chỉ được giải nén và đọc tĩnh trong máy ảo Ubuntu cô lập. Nhãn ``sạch'' là giả định, chưa được quét lại bằng công cụ khác.
+
+\section{Phương pháp}
+Chạy \texttt{evaluate.py} với ngưỡng 35. Công cụ chạy detector hai lượt (bật và tắt whitelist). Hai gói có \texttt{package.json} lỗi được ghi là \textit{ERROR} và bị tính là sạch. Sau đó dùng điểm rủi ro và điểm từng lớp trong nhật ký viễn trắc để quét ngưỡng và phân tích đóng góp từng lớp mà không cần quét lại. Quét toàn bộ tập thật mất khoảng 15 phút 48 giây trên máy ảo một nhân.
+
+\section{Kết quả}
+\subsection{Tập tổng hợp và tập thật}
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+ & Precision & Recall & F1 & FPR \\
+\midrule
+Tổng hợp (whitelist bật) & 100{,}00\% & 100{,}00\% & 100{,}00\% & 0{,}00\% \\
+Tổng hợp (whitelist tắt) & 76{,}59\% & 100{,}00\% & 86{,}74\% & 24{,}50\% \\
+Dữ liệu thật & 78{,}91\% & 66{,}60\% & 72{,}23\% & 17{,}80\% \\
+\bottomrule
+\end{tabular}
+\caption{Hiệu năng detector, ngưỡng 35.}
+\end{table}
+
+Ma trận nhầm lẫn trên dữ liệu thật: TP\,=\,333, FP\,=\,89, TN\,=\,411, FN\,=\,167. Tỷ lệ phát hiện theo loại: \texttt{malicious\_intent} 64{,}9\%, \texttt{compromised\_lib} 90{,}9\%; tỷ lệ gói sạch được cho qua là 82{,}2\%.
+
+Whitelist giảm FPR từ 24{,}5\% xuống 0\% trên tập tổng hợp, nhưng trên dữ liệu thật hai chế độ cho kết quả giống hệt nhau (cùng FP\,=\,89): các gói sạch thật trong tập này hầu như không dùng hook biên dịch nằm trong whitelist.
+
+\subsection{Ảnh hưởng của ngưỡng}
+\begin{table}[H]
+\centering
+\begin{tabular}{rrrrr}
+\toprule
+Ngưỡng & Precision & Recall & F1 & FPR \\
+\midrule
+5   & 69{,}8\% & 89{,}6\% & 78{,}5\% & 38{,}8\% \\
+15  & 75{,}0\% & 76{,}4\% & 75{,}7\% & 25{,}4\% \\
+25  & 78{,}5\% & 75{,}2\% & 76{,}8\% & 20{,}6\% \\
+35  & 78{,}9\% & 66{,}6\% & 72{,}2\% & 17{,}8\% \\
+45  & 75{,}9\% & 51{,}6\% & 61{,}4\% & 16{,}4\% \\
+70  & 65{,}3\% & 26{,}0\% & 37{,}2\% & 13{,}8\% \\
+120 & 37{,}8\% & 5{,}6\%  & 9{,}8\%  & 9{,}2\% \\
+\bottomrule
+\end{tabular}
+\caption{Quét ngưỡng điểm rủi ro trên dữ liệu thật.}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=0.85\linewidth,height=6.5cm,xlabel={Ngưỡng điểm rủi ro},ylabel={\%},
+  ymin=0,ymax=100,legend pos=north east,grid=major,legend style={font=\small}]
+\addplot[mark=*,thick] coordinates {(5,69.8)(15,75.0)(25,78.5)(35,78.9)(45,75.9)(70,65.3)(120,37.8)};
+\addplot[mark=square*,thick,dashed] coordinates {(5,89.6)(15,76.4)(25,75.2)(35,66.6)(45,51.6)(70,26.0)(120,5.6)};
+\addplot[mark=triangle*,thick,dotted] coordinates {(5,38.8)(15,25.4)(25,20.6)(35,17.8)(45,16.4)(70,13.8)(120,9.2)};
+\legend{Precision,Recall,FPR}
+\end{axis}
+\end{tikzpicture}
+\caption{Precision, Recall và FPR theo ngưỡng.}
+\end{figure}
+
+Hạ ngưỡng làm tăng Recall nhưng kéo theo FPR tăng; nâng ngưỡng thì ngược lại. F1 cao nhất trong các ngưỡng đã quét là 76{,}8\% tại ngưỡng 25. Ngưỡng này được chọn bằng cách quan sát chính tập đánh giá nên không nên xem là tối ưu tổng quát.
+
+\subsection{Đóng góp từng lớp}
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+Cấu hình & Precision & Recall & F1 & FPR & TP/FP \\
+\midrule
+Chỉ Layer 1 & 97{,}5\% & 61{,}2\% & 75{,}2\% & 1{,}6\% & 306/8 \\
+Chỉ Layer 2 & 32{,}3\% & 8{,}0\%  & 12{,}8\% & 16{,}8\% & 40/84 \\
+Chỉ Layer 3 & 0{,}0\%  & 0{,}0\%  & 0{,}0\%  & 0{,}0\%  & 0/0 \\
+Layer 1+2   & 79{,}1\% & 66{,}6\% & 72{,}3\% & 17{,}6\% & 333/88 \\
+Cả ba lớp   & 78{,}9\% & 66{,}6\% & 72{,}2\% & 17{,}8\% & 333/89 \\
+\bottomrule
+\end{tabular}
+\caption{Đóng góp từng lớp ở ngưỡng 35.}
+\end{table}
+
+\section{Phân tích}
+\paragraph{Layer 1 cho tín hiệu mạnh nhất.} Hook \texttt{preinstall}/\texttt{postinstall} xuất hiện ở phần lớn gói độc bị phát hiện (183 và 125 gói), trong khi chỉ 8 gói sạch bị Layer~1 báo nhầm (7 gói có hook \texttt{postinstall} hợp lệ ngoài whitelist).
+
+\paragraph{Layer 2 gây hầu hết báo động nhầm.} Trong 89 FP, các luật chính là entropy cao (51 gói), chuỗi mã hóa dài (51 gói) và lời gọi \texttt{eval}/\texttt{child\_process} (36 gói). Đây là đặc trưng phổ biến của thư viện hợp lệ (mã nén, hằng số mã hóa, công cụ dòng lệnh), nên luật khớp mẫu thiếu khả năng phân biệt ngữ cảnh. So với Layer~1 riêng lẻ, thêm Layer~2 tăng thêm 27 TP nhưng thêm 81 FP.
+
+\paragraph{Layer 3 chưa tạo ra phát hiện.} Trong cài đặt hiện tại, Layer~3 chỉ dò biểu thức chính quy trong chuỗi \texttt{scripts} (mô phỏng), không chạy \texttt{npm install} trong hộp cát, nên không có TP nào.
+
+\paragraph{Bỏ sót.} Trong 167 FN, 52 gói có điểm 0 và 115 gói có điểm dưới ngưỡng, chủ yếu chỉ dính luật mô tả trống (+5). Các gói này không có hook cài đặt, phiên bản bất thường hay mẫu mã nào mà detector tìm kiếm. Báo cáo này chưa phân tích mã nguồn các gói đó nên không kết luận về hành vi thật của chúng.
+
+\paragraph{Về kết quả 100\% trên tập tổng hợp.} Mẫu độc và luật phát hiện do cùng nhóm thiết kế, nên 100\% phản ánh sự khớp giữa hai phần hơn là sức mạnh tổng quát. Kết quả trên dữ liệu thật là thước đo đáng tin hơn.
+
+\section{Hạn chế}
+\begin{itemize}
+  \item Tỷ lệ 50/50 là nhân tạo; ngoài thực tế gói sạch nhiều hơn rất nhiều, nên Precision thực tế sẽ thấp hơn.
+  \item Nhãn sạch là giả định; hai gói lỗi JSON bị tính là sạch.
+  \item Mẫu độc chủ yếu là kiểu \texttt{malicious\_intent}; chỉ 33 mẫu \texttt{compromised\_lib}, quá ít để kết luận riêng.
+  \item Tập thật chưa dùng gói bị làm rối mã có chủ đích để đo Recall theo mức độ làm rối.
+  \item Ngưỡng ở mục 4.2 được chọn trên cùng tập đánh giá.
+\end{itemize}
+
+\section{Kết luận}
+Detector đạt kết quả tuyệt đối trên mẫu tự sinh nhưng chỉ đạt F1 72{,}2\% và FPR 17{,}8\% trên dữ liệu thật. Layer~1 là thành phần hiệu quả nhất; các luật entropy, chuỗi mã hóa và \texttt{child\_process} ở Layer~2 gây nhiều báo động nhầm; Layer~3 cần được cài đặt thành phân tích động thật để có đóng góp. Hướng cải thiện: giảm trọng số hoặc bổ sung ngữ cảnh cho luật Layer~2, mở rộng whitelist theo dữ liệu thật, và bổ sung tín hiệu hành vi thật.
+
+\end{document}

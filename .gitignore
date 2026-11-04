@@ -29,3 +29,8 @@ Thumbs.db
 .vscode/
 .idea/
 .env
+# Benchmark: khong dua mau doc / dataset len repo
+benchmark/**/real_dataset/
+benchmark/**/benign_dataset/
+benchmark/**/combined/
+*.zip
