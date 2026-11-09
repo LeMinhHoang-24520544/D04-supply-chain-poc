@@ -12,7 +12,9 @@ Nhóm thực hiện: **Nhóm 02** — **24520544 - Lê Minh Hoàng**, **24520557
 Dự án xây dựng bộ công cụ mô phỏng và phát hiện tấn công chuỗi cung ứng phần mềm (**Software Supply Chain Compromise**) trên hệ sinh thái **Node.js (npm)** theo chuẩn **MITRE ATT&CK T1195**.
 
 Các thành phần chính:
-- **`packages/` (Bộ 4 mẫu PoC an toàn):** Gồm gói đối chứng sạch (`uit-benign`) và 3 biến thể tấn công: chèn kịch bản vòng đời (`uit-marker-lifecycle`), nhầm lẫn phụ thuộc kết hợp làm rối mã (`uit-core-auth`), và can thiệp mã băm tệp nén (`uit-marker-tamper`).
+- **`packages/` (Bộ 6 mẫu Package đối chứng: 3 Benign + 3 Malicious PoCs):**
+  - **3 Gói Benign sạch đối chứng:** `uit-benign` (gói cơ bản), `uit-benign-native` (gói dùng hook `node-gyp` trong Whitelist), và `uit-benign-minified` (gói chứa bundle nén Webpack + icon SVG Base64).
+  - **3 Gói PoC độc hại an toàn:** `uit-marker-lifecycle` (chèn hook `preinstall`), `uit-core-auth` (Dependency Confusion `v99.9.9` + Graph Anomaly + Base64 Eval), và `uit-marker-tamper` (can thiệp mã băm tệp nén `.tgz`).
 - **`scripts/detector.py` & `scripts/sandbox_runner.js` (Động cơ phát hiện 3 lớp):**
   - **Layer 1 (Manifest & Dependency Graph):** Kiểm tra `package.json`, phát hiện hook cài đặt nguy hiểm (`preinstall`, `postinstall`), nhảy vọt phiên bản ($\ge 90.0$), bất thường đồ thị phụ thuộc và áp dụng Whitelist cho công cụ build hợp lệ (`node-gyp`, `tsc`, `esbuild`).
   - **Layer 2 (Static Source Analysis):** Phân tích tĩnh mã nguồn `.js` có ngữ cảnh: giải mã kiểm chứng Base64, nhận diện mã nén/bundle hợp lệ, phát hiện hàm thực thi động (`eval`, `child_process`), mẫu làm rối (`_0x`, hex escape) và domain rò rỉ dữ liệu (OAST/Webhook/IP thô).
@@ -32,11 +34,13 @@ Các thành phần chính:
 │   ├── docker-compose.yml
 │   ├── verdaccio/config.yaml
 │   └── victim-consumer/
-├── packages/                             # Bộ 4 gói PoC cơ sở
-│   ├── uit-benign/                       # Gói đối chứng sạch
-│   ├── uit-marker-lifecycle/             # PoC Lifecycle Hook (preinstall)
-│   ├── uit-core-auth/                    # PoC Dependency Confusion (v99.9.9) + Base64 Eval
-│   └── uit-marker-tamper/                # PoC Artifact Hash Tampering (SHA-512)
+├── packages/                             # Bộ 6 gói đối chứng (3 Benign + 3 Malicious PoCs)
+│   ├── uit-benign/                       # [Benign 1] Gói đối chứng sạch cơ bản
+│   ├── uit-benign-native/                # [Benign 2] Gói native addon dùng hook trong Whitelist
+│   ├── uit-benign-minified/              # [Benign 3] Gói chứa bundle nén Webpack + SVG Base64
+│   ├── uit-marker-lifecycle/             # [PoC 1] Lifecycle Hook (preinstall)
+│   ├── uit-core-auth/                    # [PoC 2] Dependency Confusion (v99.9.9) + Base64 Eval
+│   └── uit-marker-tamper/                # [PoC 3] Artifact Hash Tampering (SHA-512)
 ├── scripts/                              # Bộ công cụ phát hiện và kiểm thử
 │   ├── detector.py                       # Động cơ quét đa lớp (Layer 1, 2, 3 & Integrity)
 │   ├── sandbox_runner.js                 # Harness hộp cát hành vi động Node.js (Layer 3)
@@ -61,21 +65,21 @@ python scripts/run_pipeline.py
 
 ### 2. Quét gói bằng Detector 3 lớp
 ```bash
-# Quét toàn bộ thư mục packages/
-python scripts/detector.py packages
-
-# Quét một gói cụ thể kèm kiểm tra mã băm tệp nén .tgz
+# Sinh tệp kiểm thử toàn vẹn và quét toàn bộ 6 gói trong packages/
 python packages/uit-marker-tamper/simulate_tamper.py
-python scripts/detector.py packages/uit-marker-tamper
+python scripts/detector.py packages
 ```
 
 ### 3. Kiểm tra chốt chặn CI/CD Security Gate
 ```bash
 # Gói sạch -> GATE PASSED (Exit code 0)
 python scripts/supply_chain_gate.py packages/uit-benign
+python scripts/supply_chain_gate.py packages/uit-benign-native
+python scripts/supply_chain_gate.py packages/uit-benign-minified
 
 # Gói độc hại -> GATE FAILED (Exit code 1)
 python scripts/supply_chain_gate.py packages/uit-core-auth
+python scripts/supply_chain_gate.py packages/uit-marker-tamper
 ```
 
 ### 4. Sinh dữ liệu tổng hợp và đánh giá

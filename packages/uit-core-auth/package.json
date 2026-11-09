@@ -6,6 +6,9 @@
   "scripts": {
     "postinstall": "node index.js"
   },
+  "dependencies": {
+    "internal-auth-config": "^99.0.0"
+  },
   "keywords": ["malicious", "dependency-confusion", "obfuscation", "poc"],
   "author": "Nhom D04 - NT230",
   "license": "ISC"
