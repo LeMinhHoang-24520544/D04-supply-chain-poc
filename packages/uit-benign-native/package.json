@@ -1,0 +1,18 @@
+{
+  "name": "uit-benign-native",
+  "version": "1.2.0",
+  "description": "Benign native addon wrapper with whitelisted build hooks (node-gyp / tsc) for FPR baseline verification",
+  "main": "index.js",
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "build": "tsc",
+    "test": "node index.js"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0",
+    "bindings": "^1.5.0"
+  },
+  "keywords": ["uit", "benign", "native-addon", "whitelist-test"],
+  "author": "Nhom D04 - NT230",
+  "license": "MIT"
+}

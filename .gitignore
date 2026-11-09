@@ -10,7 +10,7 @@ infrastructure/storage/
 infrastructure/verdaccio/storage/
 registry/
 *.tgz
-packages/**/dist/
+packages/uit-marker-tamper/dist/
 
 # Python Runtime & Cache
 __pycache__/

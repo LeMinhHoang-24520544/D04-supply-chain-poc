@@ -5,19 +5,23 @@ Synthetic Dataset Generator for Supply Chain Security Evaluation.
 Course: NT230 - Topic D04: Supply Chain Compromise
 
 Generates a diversified corpus of npm packages (Benign vs Malicious variations):
-- Benign packages (with and without whitelisted build tools like node-gyp)
-- Lifecycle Hook Injection packages (preinstall, postinstall with mock markers)
-- Dependency Confusion packages (anomalous major versions >= 90)
-- Evasive Obfuscation packages (Base64, hex encoding, dynamic execution)
-- Outputs ground_truth.json for quantitative verification (Precision, Recall, F1, FPR).
+- Benign packages (standard utilities, minified bundles, and whitelisted build tools like node-gyp)
+- Lifecycle Hook Injection packages (preinstall, postinstall with safe mock markers)
+- Dependency Confusion & Graph Anomaly packages (major versions >= 90, unscoped internal & untrusted URL edges)
+- Evasive Obfuscation packages (Base64, multi-line buffer decoding, dynamic execution)
+- Artifact Hash Tampering packages (tarball SHA-512 integrity mismatch + untrusted dependency graph)
+- Outputs ground_truth.json with package metadata, install scripts, and dependency graph structure.
 """
 
 import os
+import io
 import json
 import shutil
 import random
 import string
 import base64
+import hashlib
+import tarfile
 import argparse
 from typing import Dict, Any, List
 
@@ -46,8 +50,23 @@ BENIGN_SAMPLE_FUNCTIONS = [
     "module.exports = { now: () => new Date().toISOString() };"
 ]
 
+BENIGN_DEPENDENCY_POOL = [
+    ("lodash", "^4.17.21"),
+    ("chalk", "^5.3.0"),
+    ("tslib", "^2.6.2"),
+    ("commander", "^11.1.0"),
+    ("debug", "^4.3.4"),
+    ("semver", "^7.5.4")
+]
+
+
 def random_ident(length: int = 8) -> str:
     return ''.join(random.choices(string.ascii_lowercase, k=length))
+
+
+def compute_sha512(data: bytes) -> str:
+    return "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode("utf-8")
+
 
 def generate_package_dataset(
     output_dir: str = "./generated_packages",
@@ -55,21 +74,22 @@ def generate_package_dataset(
     seed: int = RANDOM_SEED
 ) -> Dict[str, Any]:
     random.seed(seed)
-    
+
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    ground_truth = {
+    ground_truth: Dict[str, Any] = {
         "metadata": {
             "total_samples": num_packages,
             "seed": seed,
-            "generator": "NT230 D04 Supply Chain Dataset Generator",
+            "generator": "NT230 D04 Supply Chain Dataset Generator (with Dependency Graph & Integrity Metadata)",
             "distribution": {
                 "benign": 0,
                 "lifecycle_injection": 0,
                 "dependency_confusion": 0,
-                "evasive_obfuscation": 0
+                "evasive_obfuscation": 0,
+                "artifact_tampering": 0
             }
         },
         "packages": {}
@@ -82,27 +102,37 @@ def generate_package_dataset(
         pkg_dir = os.path.join(output_dir, pkg_id)
         os.makedirs(pkg_dir, exist_ok=True)
 
-        # Class ratio: 55% Benign, 15% Lifecycle, 15% Dependency Confusion, 15% Obfuscated
+        # Class ratio: 55% Benign, 45% Malicious across 4 supply chain attack vectors
         category = random.choices(
-            ['benign', 'lifecycle_injection', 'dependency_confusion', 'evasive_obfuscation'],
-            weights=[0.55, 0.15, 0.15, 0.15]
+            [
+                "benign",
+                "lifecycle_injection",
+                "dependency_confusion",
+                "evasive_obfuscation",
+                "artifact_tampering"
+            ],
+            weights=[0.55, 0.12, 0.12, 0.11, 0.10]
         )[0]
 
         ground_truth["metadata"]["distribution"][category] += 1
-        is_malicious = (category != 'benign')
+        is_malicious = (category != "benign")
         true_label = "MALICIOUS" if is_malicious else "BENIGN"
+
+        # Sample 1-2 realistic dependencies for dependency graph metadata
+        sampled_deps = dict(random.sample(BENIGN_DEPENDENCY_POOL, k=random.randint(1, 2)))
 
         manifest: Dict[str, Any] = {
             "name": pkg_id,
             "description": f"Synthetic library {random_ident(6)} for NT230 benchmark testing.",
             "main": "index.js",
             "author": random.choice(["UIT Security Lab", "DevOps Team", "Contributor", "Enterprise Corp"]),
-            "license": random.choice(["MIT", "Apache-2.0", "ISC"])
+            "license": random.choice(["MIT", "Apache-2.0", "ISC"]),
+            "dependencies": sampled_deps
         }
 
         index_js_content = random.choice(BENIGN_SAMPLE_FUNCTIONS)
 
-        if category == 'benign':
+        if category == "benign":
             manifest["version"] = f"{random.randint(0, 3)}.{random.randint(0, 15)}.{random.randint(0, 25)}"
             manifest["scripts"] = {
                 "test": "echo 'Running unit tests...' && exit 0"
@@ -111,7 +141,7 @@ def generate_package_dataset(
             if random.random() < 0.25:
                 manifest["scripts"]["install"] = random.choice(WHITELISTED_BENIGN_COMMANDS)
 
-        elif category == 'lifecycle_injection':
+        elif category == "lifecycle_injection":
             manifest["version"] = f"1.{random.randint(0, 5)}.{random.randint(1, 20)}"
             chosen_hook = random.choice(["preinstall", "install", "postinstall"])
             payload = random.choice(SAFE_MOCK_PAYLOADS)
@@ -120,34 +150,65 @@ def generate_package_dataset(
                 "test": "echo 'Testing...' && exit 0"
             }
 
-        elif category == 'dependency_confusion':
-            # Major version >= 90 (simulating public namespace takeover)
+        elif category == "dependency_confusion":
+            # Major version >= 90 + anomalous dependency graph edges (unscoped internal & external tarball URL)
             major_ver = random.choice([99, 100, 999, 95])
             manifest["version"] = f"{major_ver}.{random.randint(0, 5)}.{random.randint(1, 10)}"
             manifest["scripts"] = {
                 "postinstall": "node index.js"
             }
             manifest["dependencies"] = {
-                f"internal-dep-{random_ident(4)}": "^1.0.0"
+                f"internal-dep-{random_ident(4)}": "^99.0.0",
+                f"corp-auth-{random_ident(3)}": "http://local-registry:4873/untrusted-pkg.tgz"
             }
-            # Harmless index.js with mock alert
             index_js_content = "console.log('[DEPENDENCY CONFUSION MARKER] Active version override');"
 
-        elif category == 'evasive_obfuscation':
+        elif category == "evasive_obfuscation":
             manifest["version"] = f"2.{random.randint(0, 4)}.{random.randint(1, 10)}"
             manifest["scripts"] = {
                 "postinstall": "node index.js"
             }
-            
-            # Base64 encoded payload executed dynamically via eval + Buffer
             raw_payload = f"console.log('[OBFUSCATION MARKER] Decoded payload executed for {pkg_id}');"
             b64_str = base64.b64encode(raw_payload.encode()).decode()
-            
+
             evasion_flavor = random.choice(["base64_eval", "buffer_eval"])
             if evasion_flavor == "base64_eval":
                 index_js_content = f"eval(Buffer.from('{b64_str}', 'base64').toString('utf-8'));\nmodule.exports = {{}};"
             else:
                 index_js_content = f"const buf = Buffer.from('{b64_str}', 'base64');\neval(buf.toString());\nmodule.exports = {{}};"
+
+        elif category == "artifact_tampering":
+            manifest["version"] = f"1.{random.randint(0, 4)}.{random.randint(0, 9)}"
+            manifest["scripts"] = {
+                "test": "node index.js"
+            }
+            # Create a tampered tarball and integrity_manifest.json inside pkg_dir/dist/
+            dist_sub = os.path.join(pkg_dir, "dist")
+            os.makedirs(dist_sub, exist_ok=True)
+            tampered_tgz_path = os.path.join(dist_sub, f"{pkg_id}-tampered.tgz")
+
+            clean_bytes = f"// Clean source for {pkg_id}\n{index_js_content}".encode("utf-8")
+            expected_hash = compute_sha512(clean_bytes)
+
+            tampered_bytes = (
+                b"// Tampered artifact payload\n"
+                b"console.log('[TAMPER MARKER] Artifact modified after build');\n"
+            )
+            with tarfile.open(tampered_tgz_path, "w:gz") as tar:
+                tinfo = tarfile.TarInfo(name="package/index.js")
+                tinfo.size = len(tampered_bytes)
+                tar.addfile(tinfo, io.BytesIO(tampered_bytes))
+
+            with open(tampered_tgz_path, "rb") as tf:
+                actual_tampered_hash = compute_sha512(tf.read())
+            with open(os.path.join(dist_sub, "integrity_manifest.json"), "w", encoding="utf-8") as imf:
+                json.dump({
+                    "package_name": pkg_id,
+                    "version": manifest["version"],
+                    "expected_integrity": expected_hash,
+                    "actual_tampered_integrity": actual_tampered_hash,
+                    "artifact_tarball": f"dist/{pkg_id}-tampered.tgz"
+                }, imf, indent=2)
 
         # Write package.json
         with open(os.path.join(pkg_dir, "package.json"), "w", encoding="utf-8") as f:
@@ -157,13 +218,18 @@ def generate_package_dataset(
         with open(os.path.join(pkg_dir, "index.js"), "w", encoding="utf-8") as f:
             f.write(index_js_content)
 
-        # Record ground truth
+        # Record ground truth including dependency graph metadata
+        dep_dict = manifest.get("dependencies", {})
         ground_truth["packages"][pkg_id] = {
             "name": pkg_id,
             "category": category,
             "true_label": true_label,
             "version": manifest["version"],
-            "scripts": list(manifest.get("scripts", {}).keys())
+            "scripts": list(manifest.get("scripts", {}).keys()),
+            "dependency_graph": {
+                "direct_dependencies": dep_dict,
+                "edge_count": len(dep_dict)
+            }
         }
 
     # Save ground truth metadata

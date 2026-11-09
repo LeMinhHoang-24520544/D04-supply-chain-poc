@@ -1,0 +1,16 @@
+{
+  "name": "uit-benign-minified",
+  "version": "2.1.4",
+  "description": "Benign UI utility package containing minified bundle and embedded SVG Base64 asset for Layer 2 FPR verification",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild index.js --bundle --minify --outfile=dist/bundle.min.js",
+    "test": "node index.js"
+  },
+  "dependencies": {
+    "tslib": "^2.6.2"
+  },
+  "keywords": ["uit", "benign", "minified", "svg-asset"],
+  "author": "Nhom D04 - NT230",
+  "license": "MIT"
+}

@@ -7,6 +7,9 @@
     "build": "echo 'Compiling harmless assets...'",
     "test": "node -e \"const m = require('./index.js'); console.log(m.greet('Auditor'));\""
   },
+  "dependencies": {
+    "lodash": "^4.17.21"
+  },
   "keywords": ["uit", "benign", "baseline"],
   "author": "Nhom D04 - NT230",
   "license": "ISC"
