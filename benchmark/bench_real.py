@@ -144,6 +144,8 @@ def main():
     ap.add_argument("--final", action="store_true", help="allow scanning/reporting the TEST half")
     ap.add_argument("--threshold", type=int, default=35)
     ap.add_argument("--limit", type=int, default=0, help="scan only the first N packages (smoke test)")
+    ap.add_argument("--keep-test-dupes", action="store_true",
+                    help="do NOT drop malicious test packages that share a name with a dev package")
     ap.add_argument("--tag", default="static")
     args = ap.parse_args()
 
@@ -153,6 +155,20 @@ def main():
     gt = json.load(open(os.path.join(args.dataset, "ground_truth.json")))["packages"]
     split = json.load(open(args.split))
     pids = sorted(p for p in gt if p in split and (args.part == "all" or split[p] == args.part))
+    if args.part in ("test", "all") and not args.keep_test_dupes:
+        # Leakage control: drop malicious TEST packages whose name also occurs in DEV
+        # (other versions of the same package are near-duplicates of what was tuned on).
+        def pkg_name(pid):
+            try:
+                return json.load(open(os.path.join(args.dataset, pid, "package.json"), encoding="utf-8")).get("name")
+            except Exception:
+                return None
+        dev_mal_names = {pkg_name(p) for p in gt if split.get(p) == "dev" and gt[p]["true_label"] == "MALICIOUS"}
+        dev_mal_names.discard(None)
+        dropped = [p for p in pids if split[p] == "test" and gt[p]["true_label"] == "MALICIOUS"
+                   and pkg_name(p) in dev_mal_names]
+        pids = [p for p in pids if p not in set(dropped)]
+        print("Loai %d goi doc o TEST trung ten voi goi o DEV (chong ro ri)." % len(dropped), flush=True)
     if args.limit:
         pids = pids[:args.limit]
     os.makedirs(args.out_dir, exist_ok=True)
