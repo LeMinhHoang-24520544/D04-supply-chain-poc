@@ -34,6 +34,18 @@ Mẫu độc **không** nằm trong repo. Chỉ làm trong VM Ubuntu cô lập, 
    ```
 5. Phân tích ngưỡng và đóng góp từng lớp: `python3 benchmark/analyze.py`
 
+## Benchmark tĩnh cho detector hiện tại (dev/test)
+
+`bench_real.py` quét một lượt 1000 gói thật **chỉ bằng Layer 1+2** (Layer 3 và mọi lệnh tạo tiến trình bị chặn trong code, vì tập dữ liệu chứa mã độc thật). Script chia kết quả theo dev/test và ablation theo lớp; nửa test chỉ chạy với `--final`.
+
+```bash
+python3 benchmark/bench_real.py --part dev            # chỉnh luật theo kết quả dev
+python3 benchmark/bench_real.py --part all --final    # chạy MỘT lần cuối, báo cáo test
+python3 benchmark/dataset_stats.py --latex            # thống kê dữ liệu cho báo cáo
+```
+
+Đầu ra nằm ở `~/d04_real/logs/` (`static_*.json`, `fp_static_dev.csv`, `fn_static_dev.csv`).
+
 ## Hạn chế
 
 Tỷ lệ 50/50 là nhân tạo, nhãn "sạch" là giả định, mẫu độc chủ yếu thuộc loại `malicious_intent`. Xem mục Hạn chế trong báo cáo.
