@@ -58,8 +58,7 @@ WHITELISTED_HOOK_COMMANDS = [
     r"^node-pre-gyp install",
     r"^esbuild",
     r"^tsc",
-    r"^npm run build",
-    r"^echo 'Compiling harmless assets\.\.\.'"
+    r"^npm run build"
 ]
 
 # High-risk command patterns inside lifecycle scripts (Layer 1)
@@ -110,7 +109,7 @@ DANGEROUS_SHELL_ARG_REGEX = re.compile(
 # Sensitive host filesystem paths targeted directly in JS source code (Layer 2)
 SENSITIVE_SOURCE_PATH_REGEX = re.compile(
     r"(['\"`])(?:/etc/(?:passwd|shadow|sudoers|crontab)|~/.ssh|/root/\.ssh|"
-    r"[^'\"`\n]*\.npmrc|[^'\"`\n]*\.aws/credentials|/tmp/uit_marker|C:\\\\Users\\\\Public\\\\uit_marker)",
+    r"[^'\"`\n]*\.npmrc|[^'\"`\n]*\.aws/credentials)",
     re.IGNORECASE
 )
 
@@ -358,7 +357,7 @@ class SupplyChainDetector:
                 pass
 
         # Rule 1: Unscoped Internal Dependency Risk / Version Pinning Anomaly (+35 HIGH)
-        internal_prefix_re = re.compile(r"^(?:internal-|corp-|private-|uit-|intranet-|company-)", re.IGNORECASE)
+        internal_prefix_re = re.compile(r"^(?:internal-|corp-|private-|intranet-|company-)", re.IGNORECASE)
         unscoped_anomalies = []
         for dep_name, spec in direct_deps.items():
             is_unscoped_internal = (not dep_name.startswith("@")) and bool(internal_prefix_re.search(dep_name))
