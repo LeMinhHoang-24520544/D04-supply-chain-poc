@@ -7,7 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "uit-core-auth": "^1.0.0"
+    "uit-core-auth": ">=1.0.0"
   },
   "author": "Enterprise Corp"
 }
