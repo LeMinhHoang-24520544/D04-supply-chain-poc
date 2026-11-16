@@ -34,7 +34,7 @@ def _blocked(*args, **kwargs):
 
 
 # Disable Layer 3 and block any process creation from the detector.
-D.SupplyChainDetector.analyze_behavioral_sandbox = lambda self, pkg_dir, manifest: (0, [])
+D.SupplyChainDetector.analyze_behavioral_sandbox = lambda self, pkg_dir, manifest, **kw: (0, [])
 D.SupplyChainDetector._run_node_sandbox = _blocked
 D.subprocess.run = _blocked
 D.subprocess.Popen = _blocked
@@ -146,7 +146,9 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="scan only the first N packages (smoke test)")
     ap.add_argument("--keep-test-dupes", action="store_true",
                     help="do NOT drop malicious test packages that share a name with a dev package")
-    ap.add_argument("--tag", default="static")
+    ap.add_argument("--always-scan-l2", action="store_true",
+                    help="additive mode: Layer 2 always counts (no cross-layer gating)")
+    ap.add_argument("--tag", default=None, help="output tag (default: static or static_addl2)")
     args = ap.parse_args()
 
     if args.part in ("test", "all") and not args.final:
@@ -173,7 +175,10 @@ def main():
         pids = pids[:args.limit]
     os.makedirs(args.out_dir, exist_ok=True)
 
-    det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold)
+    args.tag = args.tag or ("static_addl2" if args.always_scan_l2 else "static_gated")
+    det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold,
+                                always_scan_l2=args.always_scan_l2)
+    print("Che do: %s" % ("CONG DIEM DOC LAP (always_scan_l2)" if args.always_scan_l2 else "CO CONG (gating)"), flush=True)
     print("Quet %d goi (part=%s, tinh, KHONG Layer 3) ..." % (len(pids), args.part), flush=True)
     recs = []
     t0 = time.perf_counter()

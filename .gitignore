@@ -38,3 +38,5 @@ benchmark/**/real_dataset/
 benchmark/**/benign_dataset/
 benchmark/**/combined/
 *.zip
+
+generated_evasion/
