@@ -28,6 +28,7 @@ import subprocess
 import argparse
 import ipaddress
 import posixpath
+from collections import Counter
 from urllib.parse import urlparse, unquote
 from typing import Dict, Any, List, Optional, Tuple, Set
 
@@ -40,7 +41,10 @@ SUSPICIOUS_LIFECYCLE_HOOKS = [
     "install",
     "postinstall",
     "preuninstall",
-    "postuninstall",
+    "postuninstall"
+]
+
+AUTHOR_PUBLISH_HOOKS = [
     "prepare",
     "prepack",
     "postpack",
@@ -179,22 +183,23 @@ SOURCE_CRITICAL_EXEC_PATTERNS = [
     (r"eval\s*\(\s*Buffer\.from\s*\([^;]{0,300}?(?:base64|base64url|hex)", "Inline dynamic evaluation of encoded Buffer"),
     (r"eval\s*\(\s*atob\s*\(", "Inline dynamic evaluation of Base64 atob() string"),
     (r"eval\s*\(\s*unescape\s*\(", "Obfuscated unescape dynamic evaluation"),
-    (r"(?:globalThis|global)(?:\s*\[\s*['\"`]eval['\"`]\s*\]|\s*\.\s*eval)\s*\(|\(\s*0\s*,\s*eval\s*\)\s*\(", "Indirect global/comma dynamic eval invocation"),
+    (r"(?:globalThis|global)\s*\[\s*['\"`]eval['\"`]\s*\]\s*\(", "Indirect global dynamic eval invocation"),
     (r"(?:filter|map|slice|constructor)\s*['\"`]?\s*\]?\s*\(\s*['\"`][^'\"`]*return\s+(?:process|global|require)", "Constructor chaining sandbox escape (return process/global)"),
     (r"\bReflect\.construct\s*\(\s*Function\b", "Dynamic code instantiation via Reflect.construct(Function, ...)"),
-    (r"(?:\bModule\._compile|[\w$\)\]]\s*\._compile)\s*\(", "Low-level Module._compile dynamic code injection"),
     (r"\bimport\s*\(\s*['\"`]data:(?:text|application)/javascript;base64,", "Dynamic ESM base64 data-URI module import"),
-    (r"Atomics\.wait\s*\(", "Low-level synchronous thread sleep evasion"),
 ]
 
 # Known malicious OAST / Exfiltration / Webhook endpoints & Cloud IMDS SSRF targets (Layer 2)
 MALICIOUS_EXFIL_ENDPOINT_REGEX = re.compile(
-    r"(?:oastify\.com|\boast\.(?:pro|live|site|online|fun|me)\b|burpcollaborator\.net|"
-    r"interact\.sh|interactsh\.com|webhook\.site|pipedream\.net|requestbin\.|"
+    r"(?:(?<![A-Za-z0-9_.-])(?:"
+    r"oastify\.com|oast\.(?:pro|live|site|online|fun|me)|burpcollaborator\.net|"
+    r"interact\.sh|interactsh\.com|webhook\.site|pipedream\.net|requestbin\.[A-Za-z0-9.-]+|"
     r"canarytokens\.com|dnslog\.cn|ceye\.io|ngrok\.io|ngrok-free\.app|"
     r"trycloudflare\.com|loca\.lt|serveo\.net|localhost\.run|beeceptor\.com|"
-    r"mockbin\.org|hookbin\.com|pastebin\.com/raw|catbox\.moe|"
-    r"discord(?:app)?\.com/api/webhooks|api\.telegram\.org/bot|metadata\.google\.internal|"
+    r"mockbin\.org|hookbin\.com|pastebin\.com/raw|catbox\.moe|metadata\.google\.internal"
+    r")(?![A-Za-z0-9_-])|"
+    r"discord(?:app)?\.com/api/webhooks/\d{10,}/[A-Za-z0-9_-]+|"
+    r"api\.telegram\.org/bot\d{5,}:[A-Za-z0-9_-]{10,}|"
     r"(?:https?|wss?)://(?:[A-Za-z0-9-]+\.)*(?:transfer\.sh|file\.io|rentry\.co|0x0\.st)(?=[/?#'\"`\s:]|$)|"
     r"\b169\.254\.169\.254\b(?!\.\d)|\b100\.100\.100\.200\b(?!\.\d))",
     re.IGNORECASE
@@ -205,7 +210,7 @@ DANGEROUS_SHELL_ARG_REGEX = re.compile(
     r"(?:\b(?:curl|wget|nc|netcat|ncat|bash\s+-c|sh\s+-c|cmd(?:\.exe)?\s+/c|powershell|pwsh|"
     r"whoami|uname|nslookup|dig|ping\s+-[nc]|base64\s+-d|chmod\s+\+x|/dev/tcp/|"
     r"/etc/passwd|/etc/shadow|\.npmrc|\.ssh)\b|"
-    r"(?:['\"`]|&&|\|\||;|\|)\s*id(?:\s+-[A-Za-z]+)*\s*(?:['\"`]|&&|\|\||;|\||\n|$))",
+    r"(?:&&|\|\||;|\|)\s*id(?:\s+-[A-Za-z]+)*\s*(?:['\"`]|&&|\|\||;|\||\n|$))",
     re.IGNORECASE
 )
 
@@ -342,6 +347,7 @@ class SupplyChainDetector:
         self.sandbox_runner_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "sandbox_runner.js"
         )
+        self._nm_inspect_cache: Dict[Tuple[str, bool, int], Dict[str, Any]] = {}
 
     def _deobfuscate_shell_cmd(self, cmd: str) -> str:
         """
@@ -549,7 +555,7 @@ class SupplyChainDetector:
         if not os.path.isfile(full_p):
             return False
         try:
-            if os.path.getsize(full_p) > 4096:
+            if os.path.getsize(full_p) > 16384:
                 return False
             with open(full_p, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
@@ -565,13 +571,13 @@ class SupplyChainDetector:
             r"http|https|http2|net|dgram|dns|tls|fetch|WebSocket|XMLHttpRequest|axios|got|request|undici|"
             r"writeFileSync|writeFile|appendFile|createWriteStream|readFileSync|readFile|openSync|unlink|rmSync|chmod|"
             r"userInfo|networkInterfaces|hostname|process\.binding|process\._linkedBinding|process\.dlopen|mainModule|"
-            r"fromCharCode|fromCodePoint|Atomics|global|globalThis|Reflect|Proxy|constructor)\b|"
-            r"import\s*\(|\[\s*['\"`]|"
-            r"\b_0x[a-fA-F0-9]{3,}\b|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|"
+            r"fromCharCode|fromCodePoint|Atomics|Reflect|Proxy)\b|"
+            r"import\s*\(|"
+            r"\b_0x[a-fA-F0-9]{3,}\b|"
             r"\[(?:DEPENDENCY CONFUSION MARKER|D04|OBFUSCATION MARKER|TAMPER MARKER)",
             re.IGNORECASE,
         )
-        if unsafe_tokens_re.search(content):
+        if unsafe_tokens_re.search(content) or self._detect_heavy_obfuscation(content, content):
             return False
 
         for lit_m in re.finditer(r"(['\"`])([A-Za-z0-9+/=]{32,})\1", content):
@@ -584,9 +590,9 @@ class SupplyChainDetector:
             if (has_upper and has_lower and has_digit) or (re.fullmatch(r"[0-9a-fA-F]{32,}", lit) and len(set(lit)) >= 8):
                 return False
 
-        all_reqs = re.findall(r"\brequire\b", content)
+        all_reqs = re.findall(r"\brequire\s*\(", content)
         valid_reqs = re.findall(
-            r"\brequire\s*\(\s*['\"](?:node:)?(?:os|path|tty|util)['\"]\s*\)",
+            r"\brequire\s*\(\s*['\"](?:(?:\.\.?/)+package\.json|(?:node:)?(?:os|path|tty|util|fs|url|chalk|colors|picocolors|kleur|ansi-styles|supports-color|boxen))['\"]\s*\)",
             content,
             flags=re.IGNORECASE,
         )
@@ -596,17 +602,13 @@ class SupplyChainDetector:
         if re.search(r"^\s*import\s+", content, re.MULTILINE):
             return False
 
-        benign_env_keys = {
-            "NODE_ENV", "CI", "CONTINUOUS_INTEGRATION", "ADBLOCK",
-            "DISABLE_OPENCOLLECTIVE", "OPEN_SOURCE_CONTRIBUTOR", "SILENT",
-            "INIT_CWD", "COLOR", "FORCE_COLOR", "NO_COLOR", "TERM", "DEBUG"
-        }
-        for env_m in re.finditer(r"\bprocess\.env(?:\.([A-Za-z0-9_]+)|\[['\"]([A-Za-z0-9_]+)['\"]\])?", content):
-            key = env_m.group(1) or env_m.group(2)
-            if not key:
-                return False
-            if key not in benign_env_keys and not key.startswith("npm_"):
-                return False
+        if re.search(
+            rf"\bprocess\.env(?:\s*\.\s*|\s*\[\s*['\"`])(?:{self._SENSITIVE_ENV_KEY_NAMES})\b|"
+            rf"\bJSON\.stringify\s*\(\s*process\.env\b|"
+            rf"\{{[^}}]*\b(?:{self._SENSITIVE_ENV_KEY_NAMES})\b[^}}]*\}}\s*=\s*process\.env\b",
+            content,
+        ):
+            return False
 
         return True
 
@@ -660,7 +662,11 @@ class SupplyChainDetector:
         """
         script_exts = (".sh", ".bash", ".ps1", ".bat", ".cmd", ".py")
         shell_exts = (".sh", ".bash", ".ps1", ".bat", ".cmd")
-        test_doc_prefixes = ("test/", "tests/", "__tests__/", "spec/", "example/", "examples/", "docs/", "doc/", "benchmark/", "benchmarks/")
+        test_doc_prefixes = (
+            "test/", "tests/", "__tests__/", "spec/", "example/", "examples/",
+            "docs/", "doc/", "benchmark/", "benchmarks/",
+            "integration/", "e2e/", "fixtures/", "__mocks__/",
+        )
         high_conf_aux_re = re.compile(
             r"(?<!\|)\|\s*(?!\|)(?:sh|bash|zsh|dash|ksh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh|python\d?(?:\.\d+)?|perl|ruby|php|node|iex)\b|"
             r"/dev/(?:tcp|udp)/|\bmkfifo\b|\bnc(?:at)?\s+.*?-e\b|"
@@ -764,17 +770,37 @@ class SupplyChainDetector:
         """Calculates Shannon entropy to detect heavily obfuscated / high-entropy code."""
         if not text:
             return 0.0
-        prob = [float(text.count(c)) / len(text) for c in dict.fromkeys(list(text))]
-        entropy = -sum([p * math.log(p) / math.log(2.0) for p in prob])
-        return entropy
+        counts = Counter(text)
+        n = float(len(text))
+        return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+    _AUTHOR_INLINE_NODE_RISK_RE = re.compile(
+        r"child_process|\b(?:exec|execSync|spawn|spawnSync|fork)\b|\beval\s*\(|\bFunction\s*\(|"
+        r"Buffer\.from|\batob\b|\bbase64\b|https?://|\bfetch\b|\b(?:net|dns|tls)\b|"
+        r"\b(?:userInfo|networkInterfaces)\b|\.npmrc|\.ssh|/tmp/|/etc/passwd",
+        re.IGNORECASE,
+    )
+
+    def _match_suspicious_hook_patterns(
+        self, raw_cmd: str, deobf_cmd: str, is_author_hook: bool = False
+    ) -> List[str]:
+        """Matches SUSPICIOUS_SCRIPT_PATTERNS, requiring concrete risk tokens for inline node -e/-p in author hooks."""
+        inline_desc = "Inline Node.js code evaluation (-e/--eval/-p/--print)"
+        matched = [
+            desc for pattern, desc in SUSPICIOUS_SCRIPT_PATTERNS
+            if re.search(pattern, raw_cmd, re.IGNORECASE) or re.search(pattern, deobf_cmd, re.IGNORECASE)
+        ]
+        if is_author_hook and matched == [inline_desc]:
+            if not (self._AUTHOR_INLINE_NODE_RISK_RE.search(raw_cmd) or self._AUTHOR_INLINE_NODE_RISK_RE.search(deobf_cmd)):
+                return []
+        return matched
 
     def analyze_manifest(
         self, pkg_path: str, data: Dict[str, Any], is_tarball: bool = False
     ) -> Tuple[int, List[Dict[str, Any]]]:
         """
         Layer 1A: Manifest Analysis (package.json).
-        Inspects lifecycle scripts, binding.gyp, auxiliary scripts, version anomalies,
-        typosquatting, binary shadowing, and metadata indicators.
+        Inspects lifecycle scripts, version numbering anomalies, and metadata indicators.
         """
         score = 0
         findings = []
@@ -792,89 +818,134 @@ class SupplyChainDetector:
                 "detail": g_issue
             })
 
-        # 1. Inspect lifecycle scripts & multi-hop bridged scripts
+        # 1. Inspect consumer lifecycle scripts (preinstall/install/postinstall/uninstall)
+        #    and author publish/build hooks (prepare/prepack/postpack/prepublish)
         scripts = data.get("scripts", {})
         if isinstance(scripts, dict):
             for hook in SUSPICIOUS_LIFECYCLE_HOOKS:
-                if hook in scripts:
-                    command = str(scripts[hook]).strip()
-                    if not command:
-                        continue
-                    all_hook_commands.append(command)
-                    deobf_cmd = self._deobfuscate_shell_cmd(command)
-                    bridged_chain = self._resolve_script_chain(command, scripts)
-                    for _, sub_cmd in bridged_chain:
-                        all_hook_commands.append(sub_cmd)
+                if hook not in scripts:
+                    continue
+                command = str(scripts[hook]).strip()
+                if not command:
+                    continue
+                all_hook_commands.append(command)
+                deobf_cmd = self._deobfuscate_shell_cmd(command)
+                bridged_chain = self._resolve_script_chain(command, scripts)
+                for _, sub_cmd in bridged_chain:
+                    all_hook_commands.append(sub_cmd)
 
-                    whitelisted = self._is_whitelisted_command(command, scripts=scripts, pkg_dir=pkg_path)
+                whitelisted = self._is_whitelisted_command(command, scripts=scripts, pkg_dir=pkg_path)
+                direct_patterns = self._match_suspicious_hook_patterns(command, deobf_cmd, is_author_hook=False)
 
-                    direct_patterns: List[str] = []
-                    for pattern, desc in SUSPICIOUS_SCRIPT_PATTERNS:
-                        if re.search(pattern, command, re.IGNORECASE) or re.search(pattern, deobf_cmd, re.IGNORECASE):
-                            direct_patterns.append(desc)
-
-                    bridged_findings: List[Dict[str, Any]] = []
-                    for sub_name, sub_cmd in bridged_chain:
-                        deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
-                        sub_has_inline_eval = bool(re.search(r"\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b", deobf_sub, re.IGNORECASE))
-                        sub_matched_patterns = [
-                            desc for pattern, desc in SUSPICIOUS_SCRIPT_PATTERNS
-                            if re.search(pattern, sub_cmd, re.IGNORECASE) or re.search(pattern, deobf_sub, re.IGNORECASE)
-                        ]
-                        if sub_matched_patterns or sub_has_inline_eval:
-                            whitelisted = False
-                            for desc in sub_matched_patterns:
-                                bridged_findings.append({
-                                    "layer": "Layer 1 - Manifest",
-                                    "rule": "Suspicious Hook Command Pattern",
-                                    "severity": "CRITICAL",
-                                    "detail": f"{desc} in bridged script '{sub_name}' (via '{hook}'): {sub_cmd}"
-                                })
-
-                    if direct_patterns or bridged_findings:
+                bridged_findings: List[Dict[str, Any]] = []
+                for sub_name, sub_cmd in bridged_chain:
+                    deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
+                    sub_matched_patterns = self._match_suspicious_hook_patterns(
+                        sub_cmd, deobf_sub, is_author_hook=False
+                    )
+                    if sub_matched_patterns:
                         whitelisted = False
+                        for desc in sub_matched_patterns:
+                            bridged_findings.append({
+                                "layer": "Layer 1 - Manifest",
+                                "rule": "Suspicious Hook Command Pattern",
+                                "severity": "CRITICAL",
+                                "detail": f"{desc} in bridged script '{sub_name}' (via '{hook}'): {sub_cmd}"
+                            })
 
-                    if whitelisted:
-                        findings.append({
+                if direct_patterns or bridged_findings:
+                    whitelisted = False
+
+                if whitelisted:
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": f"Whitelisted Hook: {hook}",
+                        "severity": "INFO",
+                        "detail": f"Command '{command}' matches whitelist rule."
+                    })
+                elif (
+                    not bridged_findings
+                    and self._is_official_github_release_download(command, data)
+                    and not [d for d in direct_patterns if d != "Remote network egress / LOLBin tool invoked in script"]
+                ):
+                    score += 15
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": f"Suspicious Lifecycle Hook: {hook}",
+                        "severity": "MEDIUM",
+                        "detail": f"Hook '{hook}' downloads binary from package's own GitHub Releases: {command}"
+                    })
+                    direct_patterns = [
+                        d for d in direct_patterns
+                        if d != "Remote network egress / LOLBin tool invoked in script"
+                    ]
+                elif not direct_patterns and not bridged_findings and self._is_benign_local_node_script(hook, command, pkg_path):
+                    score += 15
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": f"Suspicious Lifecycle Hook: {hook}",
+                        "severity": "LOW",
+                        "detail": f"Hook '{hook}' invokes short local banner/check Node script: {command}"
+                    })
+                else:
+                    has_suspicious_install_hook = True
+                    score += 40
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": f"Suspicious Lifecycle Hook: {hook}",
+                        "severity": "HIGH",
+                        "detail": f"Detected active '{hook}' hook with command: {command}"
+                    })
+
+                for desc in direct_patterns:
+                    score += 25
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": "Suspicious Hook Command Pattern",
+                        "severity": "CRITICAL",
+                        "detail": f"{desc} in '{hook}': {command}"
+                    })
+
+                for bf in bridged_findings:
+                    score += 25
+                    findings.append(bf)
+
+            for hook in AUTHOR_PUBLISH_HOOKS:
+                if hook not in scripts:
+                    continue
+                command = str(scripts[hook]).strip()
+                if not command:
+                    continue
+                all_hook_commands.append(command)
+                deobf_cmd = self._deobfuscate_shell_cmd(command)
+                bridged_chain = self._resolve_script_chain(command, scripts)
+                for _, sub_cmd in bridged_chain:
+                    all_hook_commands.append(sub_cmd)
+
+                direct_patterns = self._match_suspicious_hook_patterns(command, deobf_cmd, is_author_hook=True)
+                bridged_findings = []
+                for sub_name, sub_cmd in bridged_chain:
+                    deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
+                    sub_matched_patterns = self._match_suspicious_hook_patterns(
+                        sub_cmd, deobf_sub, is_author_hook=True
+                    )
+                    for desc in sub_matched_patterns:
+                        bridged_findings.append({
                             "layer": "Layer 1 - Manifest",
-                            "rule": f"Whitelisted Hook: {hook}",
-                            "severity": "INFO",
-                            "detail": f"Command '{command}' matches whitelist rule."
-                        })
-                    elif (
-                        not bridged_findings
-                        and self._is_official_github_release_download(command, data)
-                        and not [d for d in direct_patterns if d != "Remote network egress / LOLBin tool invoked in script"]
-                    ):
-                        score += 15
-                        findings.append({
-                            "layer": "Layer 1 - Manifest",
-                            "rule": f"Suspicious Lifecycle Hook: {hook}",
-                            "severity": "MEDIUM",
-                            "detail": f"Hook '{hook}' downloads binary from package's own GitHub Releases: {command}"
-                        })
-                        direct_patterns = [
-                            d for d in direct_patterns
-                            if d != "Remote network egress / LOLBin tool invoked in script"
-                        ]
-                    elif not direct_patterns and not bridged_findings and self._is_benign_local_node_script(hook, command, pkg_path):
-                        score += 15
-                        findings.append({
-                            "layer": "Layer 1 - Manifest",
-                            "rule": f"Suspicious Lifecycle Hook: {hook}",
-                            "severity": "LOW",
-                            "detail": f"Hook '{hook}' invokes short local banner/check Node script: {command}"
-                        })
-                    else:
-                        has_suspicious_install_hook = True
-                        score += 40
-                        findings.append({
-                            "layer": "Layer 1 - Manifest",
-                            "rule": f"Suspicious Lifecycle Hook: {hook}",
-                            "severity": "HIGH",
-                            "detail": f"Detected active '{hook}' hook with command: {command}"
+                            "rule": "Suspicious Hook Command Pattern",
+                            "severity": "CRITICAL",
+                            "detail": f"{desc} in bridged script '{sub_name}' (via '{hook}'): {sub_cmd}"
                         })
 
+                if direct_patterns or bridged_findings:
+                    has_suspicious_install_hook = True
+                    score += 40
+                    findings.append({
+                        "layer": "Layer 1 - Manifest",
+                        "rule": f"Suspicious Lifecycle Hook: {hook}",
+                        "severity": "HIGH",
+                        "detail": f"Detected suspicious '{hook}' hook with command: {command}"
+                    })
                     for desc in direct_patterns:
                         score += 25
                         findings.append({
@@ -883,7 +954,6 @@ class SupplyChainDetector:
                             "severity": "CRITICAL",
                             "detail": f"{desc} in '{hook}': {command}"
                         })
-
                     for bf in bridged_findings:
                         score += 25
                         findings.append(bf)
@@ -891,12 +961,12 @@ class SupplyChainDetector:
         # 1b. Scan auxiliary shell/script files (.sh, .bash, .ps1, .bat, .cmd, .py)
         aux_hits = self._scan_auxiliary_scripts(pkg_path, all_hook_commands, manifest=data, is_tarball=is_tarball)
         unref_aux_scored = False
-        for rel_p, desc, is_ref, is_high_conf in aux_hits:
-            if is_ref or is_high_conf:
+        for rel_p, desc, is_ref, _is_high_conf in aux_hits:
+            if is_ref:
                 score += 25
                 findings.append({
                     "layer": "Layer 1 - Manifest",
-                    "rule": "Suspicious Hook Command Pattern" if is_ref else "Suspicious Auxiliary Script Pattern",
+                    "rule": "Suspicious Hook Command Pattern",
                     "severity": "CRITICAL",
                     "detail": f"{desc} in auxiliary script '{rel_p}'"
                 })
@@ -992,14 +1062,21 @@ class SupplyChainDetector:
                         code_files_count += sum(
                             1 for fn in files if fn.endswith((".js", ".cjs", ".mjs", ".ts", ".sh", ".ps1", ".bat", ".py"))
                         )
-                    has_any_lifecycle = isinstance(scripts, dict) and any(h in scripts for h in SUSPICIOUS_LIFECYCLE_HOOKS)
-                    if has_any_lifecycle or code_files_count <= 3:
+                    if has_suspicious_install_hook:
                         score += 35
                         findings.append({
                             "layer": "Layer 1 - Manifest",
                             "rule": "Typosquatting / Brandjacking Indicator",
                             "severity": "HIGH",
-                            "detail": f"Package name '{pkg_name_raw}' closely resembles popular package '{typo_target}' with install hook or minimal file footprint"
+                            "detail": f"Package name '{pkg_name_raw}' closely resembles popular package '{typo_target}' with suspicious install hook"
+                        })
+                    elif code_files_count <= 3:
+                        score += 20
+                        findings.append({
+                            "layer": "Layer 1 - Manifest",
+                            "rule": "Typosquatting / Brandjacking Indicator",
+                            "severity": "MEDIUM",
+                            "detail": f"Package name '{pkg_name_raw}' closely resembles popular package '{typo_target}' with minimal file footprint"
                         })
 
         # 4. Rule 1A.6: Binary / Command Shadowing
@@ -1230,20 +1307,55 @@ class SupplyChainDetector:
             if pkg_dir and self._is_traversal_file_spec(pkg_dir, ver_part):
                 return True, f"{alias_key} -> {spec} (path traversal target)"
 
+        root_name = str(manifest.get("name", "")).strip().lower() if isinstance(manifest, dict) else ""
+        root_scope = (root_name.split("/")[0] + "/") if "/" in root_name else ""
         key_base = self._extract_package_key_name(alias_key)
         if not key_base or key_base == "*" or target_pkg == key_base:
             return False, ""
 
-        # Allow common compat suffixes (-cjs, -esm, -compat, -legacy, -v4, 4) when scope matches
-        key_stripped = re.sub(r"(?:-cjs|-esm|-compat|-legacy|-v?\d+|\d+)$", "", key_base)
-        key_scoped = key_base.startswith("@")
-        target_scoped = target_pkg.startswith("@")
-        if key_stripped == target_pkg and key_scoped == target_scoped:
+        key_unscoped = key_base.split("/")[-1] if "/" in key_base else key_base
+        target_unscoped = target_pkg.split("/")[-1] if "/" in target_pkg else target_pkg
+
+        if target_pkg in POPULAR_NPM_PACKAGES or target_unscoped in POPULAR_NPM_PACKAGES:
+            return False, ""
+        if root_scope and target_pkg.startswith(root_scope):
+            return False, ""
+        if any(target_pkg.startswith(sc) for sc in TRUSTED_OFFICIAL_SCOPES):
+            return False, ""
+        if key_unscoped == target_unscoped:
+            return False, ""
+        if min(len(key_unscoped), len(target_unscoped)) >= 3 and (
+            key_unscoped in target_unscoped or target_unscoped in key_unscoped
+        ):
+            return False, ""
+
+        suffix_re = r"(?:[-_.]?(?:cjs|esm|compat|legacy|v?\d+(?:[_.-]\d+)*))+$"
+        if re.sub(suffix_re, "", key_unscoped) == re.sub(suffix_re, "", target_unscoped):
             return False, ""
 
         return True, f"{alias_key} -> {spec} (redirects to unrelated package '{target_pkg}')"
 
     def _inspect_bundled_node_modules(
+        self,
+        pkg_dir: str,
+        manifest: Optional[Dict[str, Any]] = None,
+        is_tarball: bool = False,
+        budget: int = 50,
+    ) -> Dict[str, Any]:
+        """Cached wrapper around `_inspect_bundled_node_modules_impl` per package scan."""
+        cache_key = (os.path.abspath(pkg_dir), bool(is_tarball), int(budget))
+        cached = self._nm_inspect_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        res = self._inspect_bundled_node_modules_impl(
+            pkg_dir, manifest=manifest, is_tarball=is_tarball, budget=budget
+        )
+        if len(self._nm_inspect_cache) >= 8:
+            self._nm_inspect_cache.clear()
+        self._nm_inspect_cache[cache_key] = res
+        return res
+
+    def _inspect_bundled_node_modules_impl(
         self,
         pkg_dir: str,
         manifest: Optional[Dict[str, Any]] = None,
@@ -1731,7 +1843,7 @@ class SupplyChainDetector:
 
         # Rule 4: Protocol Alias Hijacking via npm: (+40 HIGH)
         alias_hijacks = []
-        for dep_name, spec in all_manifest_deps.items():
+        for dep_name, spec in direct_deps.items():
             is_bad_alias, alias_reason = self._is_suspicious_npm_alias(dep_name, spec, manifest, pkg_dir)
             if is_bad_alias:
                 alias_hijacks.append(alias_reason)
@@ -2008,8 +2120,10 @@ class SupplyChainDetector:
         ".json", ".node", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
         ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".map", ".tar", ".tgz", ".gz", ".zip"
     )
-    _JS_COMMENT_OR_STR_RE = re.compile(
-        r'("(?:\\[\s\S]|[^"\\\n])*"|\'(?:\\[\s\S]|[^\'\\\n])*\'|`(?:\\[\s\S]|[^`\\])*`)|'
+    _JS_COMMENT_AND_LITERAL_RE = re.compile(
+        r'("(?:\\[\s\S]|[^"\\\n])*"|\'(?:\\[\s\S]|[^\'\\\n])*\'|`(?:\\[\s\S]|[^`\\])*`|'
+        r'(?:(?<=[=(,:!&|?~;{\[\n])|\b(?:return|case|throw|typeof|void|delete|yield|await|else|do)\b)[ \t]*/(?![/*])'
+        r'(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\[\n])+/[gimsuydv]*)|'
         r'(/\*[\s\S]*?\*/|//[^\n]*)'
     )
     _JS_ESCAPE_DECODE_RE = re.compile(r'(\\\\)|\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4}))')
@@ -2024,14 +2138,17 @@ class SupplyChainDetector:
     def _is_likely_minified_or_dist(self, rel_path: str, content: str) -> bool:
         """
         Determines whether a JS file is a genuine minified/bundled asset (`len >= 3000`
-        combined with high average line length or authentic bundler signatures),
-        preventing attackers from abusing `dist/`, `sourceMappingURL=`, or small files
-        to evade Layer 2 analysis.
+        combined with dist/bundler paths, `.min`/`.bundle` suffixes, high average line
+        length, or authentic bundler signatures).
         """
         if not content or len(content) < 3000:
             return False
-        lines = content.splitlines()
-        avg_line_len = len(content) / max(1, len(lines))
+        norm_rel = rel_path.replace("\\", "/").lower()
+        if norm_rel.endswith((".min.js", ".min.mjs", ".min.cjs", ".bundle.js", ".prod.js", ".umd.js")):
+            return True
+        if norm_rel.startswith(("dist/", "umd/", "bundles/", "cjs/", "esm/", "build/", "browser/dist/")) or "/dist/" in f"/{norm_rel}":
+            return True
+        avg_line_len = len(content) / (content.count("\n") + 1)
         if avg_line_len >= 180:
             return True
         if "__webpack_require__" in content or "parcelRequire" in content:
@@ -2048,124 +2165,15 @@ class SupplyChainDetector:
 
     def _strip_js_comments_safely(self, content: str) -> str:
         """
-        Single-pass O(n) lexer that strips JS line (`//`) and block (`/* ... */`) comments
-        while preserving string literals, template literals, and JS RegExp literals
-        (e.g. `/a\\/*/`, `/https?:\\/\\//`, `/"/`) verbatim so regex slashes or quotes never
-        trigger false comment truncation.
+        Fast single-regex pass that strips JS line (`//`) and block (`/* ... */`) comments
+        while preserving strings, template literals, and contextual JS RegExp literals.
         """
-        if not content:
+        if not content or ("//" not in content and "/*" not in content):
             return content
-        n = len(content)
-        out: List[str] = []
-        i = 0
-        can_start_regex = True
-        regex_prefix_keywords = {
-            "return", "case", "throw", "in", "of", "typeof", "void",
-            "delete", "new", "yield", "await", "else", "do",
-            "instanceof", "export", "default",
-        }
-
-        while i < n:
-            ch = content[i]
-            if ch.isspace():
-                out.append(ch)
-                i += 1
-                continue
-
-            # String or template literals
-            if ch in ("'", '"', "`"):
-                quote = ch
-                start = i
-                i += 1
-                while i < n:
-                    sc = content[i]
-                    if sc == "\\":
-                        i += 2
-                        continue
-                    if sc == quote:
-                        i += 1
-                        break
-                    if quote != "`" and sc in ("\n", "\r"):
-                        break
-                    i += 1
-                out.append(content[start:i])
-                can_start_regex = False
-                continue
-
-            # Comments (`//` and `/* ... */`)
-            if ch == "/" and i + 1 < n:
-                nxt = content[i + 1]
-                if nxt == "/":
-                    i += 2
-                    while i < n and content[i] != "\n":
-                        i += 1
-                    out.append(" ")
-                    continue
-                if nxt == "*":
-                    end = content.find("*/", i + 2)
-                    if end == -1:
-                        out.append("\n" if "\n" in content[i:] else " ")
-                        break
-                    block = content[i:end + 2]
-                    out.append("\n" if "\n" in block else " ")
-                    i = end + 2
-                    continue
-
-                # Contextual JS RegExp literal check
-                if can_start_regex:
-                    j = i + 1
-                    in_class = False
-                    found_close = False
-                    while j < n:
-                        rc = content[j]
-                        if rc in ("\n", "\r"):
-                            break
-                        if rc == "\\":
-                            j += 2
-                            continue
-                        if rc == "[" and not in_class:
-                            in_class = True
-                        elif rc == "]" and in_class:
-                            in_class = False
-                        elif rc == "/" and not in_class:
-                            found_close = True
-                            j += 1
-                            break
-                        j += 1
-                    if found_close:
-                        while j < n and content[j] in "gimsuydv":
-                            j += 1
-                        out.append(content[i:j])
-                        i = j
-                        can_start_regex = False
-                        continue
-
-                out.append(ch)
-                i += 1
-                can_start_regex = True
-                continue
-
-            # Identifiers / numbers / keywords
-            if ch.isalnum() or ch in ("_", "$"):
-                start = i
-                i += 1
-                while i < n and (content[i].isalnum() or content[i] in ("_", "$")):
-                    i += 1
-                word = content[start:i]
-                out.append(word)
-                can_start_regex = word in regex_prefix_keywords
-                continue
-
-            out.append(ch)
-            if ch in ("=", "(", "[", "{", "}", ",", ";", ":", "!", "&", "|", "?", "~", "+", "-", "*", "%", "^", "<", ">"):
-                can_start_regex = True
-            elif ch in (")", "]", "."):
-                can_start_regex = False
-            else:
-                can_start_regex = False
-            i += 1
-
-        return "".join(out)
+        return self._JS_COMMENT_AND_LITERAL_RE.sub(
+            lambda m: m.group(1) if m.group(1) is not None else ("\n" if "\n" in m.group(2) else " "),
+            content,
+        )
 
     def _normalize_js_for_static_scan(self, content: str) -> str:
         """
@@ -2190,7 +2198,7 @@ class SupplyChainDetector:
                     return ch
             return match.group(0)
 
-        norm = self._JS_ESCAPE_DECODE_RE.sub(_decode_esc, content)
+        norm = self._JS_ESCAPE_DECODE_RE.sub(_decode_esc, content) if ("\\x" in content or "\\u" in content) else content
 
         def _fold_same_quote(match: re.Match, q: str) -> str:
             return f"{q}{match.group(1)}{match.group(2)}{q}"
@@ -2208,30 +2216,32 @@ class SupplyChainDetector:
                 return f"`{combined}`"
             return match.group(0)
 
-        tail_guard = r"(?!\s*(?:\.(?!\.\.)|\[))"
-        sq_re = re.compile(rf"'([^'\\\n]{{0,200}})'\s*\+\s*'([^'\\\n]{{0,200}})'{tail_guard}")
-        dq_re = re.compile(rf'"([^"\\\n]{{0,200}})"\s*\+\s*"([^"\\\n]{{0,200}})"{tail_guard}')
-        bt_re = re.compile(
-            rf"`((?:(?!\$\{{)[^`\\\n]){{0,200}})`\s*\+\s*`((?:(?!\$\{{)[^`\\\n]){{0,200}})`{tail_guard}"
-        )
-        any_side = r"(?:'([^'\\\n]{0,200})'|\"([^\"\\\n]{0,200})\"|`((?:(?!\$\{)[^`\\\n]){0,200})`)"
-        mix_any_re = re.compile(rf"{any_side}\s*\+\s*{any_side}{tail_guard}")
+        if "+" in norm and re.search(r"['\"`]\s*\+\s*['\"`]", norm):
+            tail_guard = r"(?!\s*(?:\.(?!\.\.)|\[))"
+            sq_re = re.compile(rf"'([^'\\\n]{{0,200}})'\s*\+\s*'([^'\\\n]{{0,200}})'{tail_guard}")
+            dq_re = re.compile(rf'"([^"\\\n]{{0,200}})"\s*\+\s*"([^"\\\n]{{0,200}})"{tail_guard}')
+            bt_re = re.compile(
+                rf"`((?:(?!\$\{{)[^`\\\n]){{0,200}})`\s*\+\s*`((?:(?!\$\{{)[^`\\\n]){{0,200}})`{tail_guard}"
+            )
+            any_side = r"(?:'([^'\\\n]{0,200})'|\"([^\"\\\n]{0,200})\"|`((?:(?!\$\{)[^`\\\n]){0,200})`)"
+            mix_any_re = re.compile(rf"{any_side}\s*\+\s*{any_side}{tail_guard}")
 
-        for _ in range(16):
-            updated = sq_re.sub(lambda m: _fold_same_quote(m, "'"), norm)
-            updated = dq_re.sub(lambda m: _fold_same_quote(m, '"'), updated)
-            updated = bt_re.sub(lambda m: _fold_same_quote(m, "`"), updated)
-            updated = mix_any_re.sub(_fold_any_pair, updated)
-            if updated == norm:
-                break
-            norm = updated
+            for _ in range(6):
+                updated = sq_re.sub(lambda m: _fold_same_quote(m, "'"), norm)
+                updated = dq_re.sub(lambda m: _fold_same_quote(m, '"'), updated)
+                updated = bt_re.sub(lambda m: _fold_same_quote(m, "`"), updated)
+                updated = mix_any_re.sub(_fold_any_pair, updated)
+                if updated == norm:
+                    break
+                norm = updated
 
         # Convert bracket member access to dot notation for valid JS identifiers
-        norm = re.sub(
-            r"""(?<=[\w$\)\]])\s*\[\s*(['"`])([A-Za-z_$][\w$]*)\1\s*\](?!\s*:)""",
-            r".\2",
-            norm,
-        )
+        if "[" in norm:
+            norm = re.sub(
+                r"""(?<=[\w$\)\]])\s*\[\s*(['"`])([A-Za-z_$][\w$]*)\1\s*\](?!\s*:)""",
+                r".\2",
+                norm,
+            )
         return norm
 
     def _is_malicious_public_ipv4(self, ip_str: str) -> bool:
@@ -2489,6 +2499,11 @@ class SupplyChainDetector:
             i += 1
         return targets
 
+    _IGNORED_TEST_DOC_SEG_RE = re.compile(
+        r"(?:^|/)(?:tests?|__tests__|specs?|testing|test-utils|examples?|docs?|benchmarks?|fixtures|__mocks__|integration|e2e)(?:/|$)",
+        re.IGNORECASE,
+    )
+
     def _extract_declared_entrypoints(self, pkg_dir: str, manifest: Dict[str, Any]) -> Set[str]:
         """
         Collects normalized relative paths of package entrypoints (`main`, `bin`, `exports`,
@@ -2517,7 +2532,9 @@ class SupplyChainDetector:
 
         def walk_exports(node: Any):
             if isinstance(node, str):
-                add_candidate(node)
+                norm_ep = node.strip().replace("\\", "/").lstrip("./")
+                if norm_ep and not self._IGNORED_TEST_DOC_SEG_RE.search(norm_ep):
+                    add_candidate(node)
             elif isinstance(node, list):
                 for item in node:
                     walk_exports(item)
@@ -2745,13 +2762,17 @@ class SupplyChainDetector:
         return not bool(DECODED_PAYLOAD_INDICATORS.search(decoded))
 
     def _detect_heavy_obfuscation(
-        self, raw_content: str, no_comments: str, norm_code: Optional[str] = None
+        self,
+        raw_content: str,
+        no_comments: str,
+        norm_code: Optional[str] = None,
+        is_minified: bool = False,
     ) -> Optional[str]:
         """
         Rule 2.6: Detects JSFuck, XOR decoding loops, `_0x` (including prefixed `a0_0x...`),
         dense/split ASCII `\\xXX` or `\\uXXXX` escapes (ignoring non-ASCII i18n escapes),
-        and suspicious `fromCharCode`/`fromCodePoint` via `.apply`/spread/`.map`, while
-        exempting sequential lookup tables and clean byte-to-char decoders.
+        and suspicious `fromCharCode`/`fromCodePoint` via `.apply`/spread/`.map` when backed
+        by non-sequential integer charcode arrays.
         """
         # 1. JSFuck payloads (high-confidence standalone signature)
         for jsf_m in re.finditer(r"[!+()\[\]{}]{30,}", raw_content):
@@ -2760,20 +2781,19 @@ class SupplyChainDetector:
 
         cc_haystack = norm_code if norm_code is not None else no_comments
 
-        # 2. XOR dynamic decoding loops around fromCharCode/fromCodePoint
-        for cc_call in re.finditer(r"\bfrom(?:CharCode|CodePoint)\b", cc_haystack):
-            win = cc_haystack[max(0, cc_call.start() - 350):min(len(cc_haystack), cc_call.end() + 200)]
-            win_no_str = re.sub(r"(['\"`])(?:\\[\s\S]|(?!\1)[^\\])*\1", " ", win)
-            win_no_regex = re.sub(
-                r"(?<=[=(,:!&|?~;{\[\n])\s*/(?:\\.|[^/\\\n])+/[gimsuydv]*",
-                " ",
-                win_no_str,
-            )
-            if re.search(r"[\w$\)\]]\s*\^\s*(?:0x[0-9a-fA-F]+|\d+|[A-Za-z_$\(\[])", win_no_regex):
-                if (
-                    "charCodeAt" in win_no_regex
-                    or "codePointAt" in win_no_regex
-                    or re.search(r"\.\s*map\s*\(|\b(?:for|while)\s*\(|\[[^\]]+\]", win_no_regex)
+        # 2. XOR dynamic decoding loops around fromCharCode/fromCodePoint (skip on minified bundles)
+        if not is_minified:
+            for cc_call in re.finditer(r"\bfrom(?:CharCode|CodePoint)\b", cc_haystack):
+                win = cc_haystack[max(0, cc_call.start() - 350):min(len(cc_haystack), cc_call.end() + 200)]
+                win_no_str = re.sub(r"(['\"`])(?:\\[\s\S]|(?!\1)[^\\])*\1", " ", win)
+                win_no_regex = re.sub(
+                    r"(?<=[=(,:!&|?~;{\[\n])\s*/(?:\\.|[^/\\\n])+/[gimsuydv]*",
+                    " ",
+                    win_no_str,
+                )
+                if re.search(
+                    r"(?:charCodeAt|codePointAt)\s*\([^)]*\)\s*\^|\^\s*[^;,\n]{0,40}?(?:charCodeAt|codePointAt)\s*\(",
+                    win_no_regex,
                 ):
                     return "XOR charCodeAt/array dynamic payload decoding loop"
 
@@ -2811,7 +2831,7 @@ class SupplyChainDetector:
 
         num_arr_re = re.compile(r"\[\s*((?:0x[0-9a-fA-F]+|\d+)(?:\s*,\s*(?:0x[0-9a-fA-F]+|\d+)){7,})\s*\]")
 
-        # 6a. Indirect `.apply()` or `...spread` with fromCharCode/fromCodePoint
+        # 6a. Indirect `.apply()` or `...spread` with fromCharCode/fromCodePoint (require inline numeric array)
         apply_spread_re = re.compile(
             r"String\.from(?:CharCode|CodePoint)\s*\.\s*apply\s*\(|"
             r"String\.from(?:CharCode|CodePoint)\s*\(\s*\.\.\.\s*[A-Za-z_$\[]"
@@ -2819,17 +2839,17 @@ class SupplyChainDetector:
         for ind_m in apply_spread_re.finditer(cc_haystack):
             win = cc_haystack[max(0, ind_m.start() - 300):min(len(cc_haystack), ind_m.end() + 200)]
             inline_arrays = list(num_arr_re.finditer(win))
-            if inline_arrays:
-                all_benign = all(
-                    self._is_benign_sequential_charcodes([
-                        int(tok, 16) if tok.lower().startswith("0x") else int(tok)
-                        for tok in re.findall(r"0x[0-9a-fA-F]+|\d+", arr_m.group(1))
-                    ])
-                    for arr_m in inline_arrays
-                )
-                if all_benign:
-                    continue
-            return "Indirect String.fromCharCode (.apply/spread) obfuscation"
+            if not inline_arrays:
+                continue
+            all_benign = all(
+                self._is_benign_sequential_charcodes([
+                    int(tok, 16) if tok.lower().startswith("0x") else int(tok)
+                    for tok in re.findall(r"0x[0-9a-fA-F]+|\d+", arr_m.group(1))
+                ])
+                for arr_m in inline_arrays
+            )
+            if not all_benign:
+                return "Indirect String.fromCharCode (.apply/spread) obfuscation"
 
         # 6b. Indirect `.map(...)` with single/multi-param arrow or function callback
         map_cc_re = re.compile(
@@ -2925,28 +2945,30 @@ class SupplyChainDetector:
 
         return 0, None
 
-    def _calculate_windowed_entropy(self, content: str) -> float:
+    def _calculate_windowed_entropy(self, content: str, already_stripped: bool = False) -> float:
         """
-        Rule 2.9 helper: Strips JS comments and benign image/font Data URIs, then computes
-        maximum Shannon entropy over 512-byte sliding windows (step 128 bytes).
+        Rule 2.9 helper: Strips JS comments (if not already stripped) and benign image/font Data URIs,
+        then computes maximum Shannon entropy over 512-byte sliding windows (step 256 bytes).
         """
         if not content:
             return 0.0
-        stripped = self._strip_js_comments_safely(content)
-        stripped = re.sub(
-            r"data:(?:image|font|audio|video)/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{24,}",
-            " ",
-            stripped,
-            flags=re.IGNORECASE,
-        )
-        stripped = re.sub(r"sourceMappingURL=[^\s]+", " ", stripped)
+        stripped = content if already_stripped else self._strip_js_comments_safely(content)
+        if "data:" in stripped:
+            stripped = re.sub(
+                r"data:(?:image|font|audio|video)/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{24,}",
+                " ",
+                stripped,
+                flags=re.IGNORECASE,
+            )
+        if "sourceMappingURL=" in stripped:
+            stripped = re.sub(r"sourceMappingURL=[^\s]+", " ", stripped)
         n = len(stripped)
         if n <= 200:
             return 0.0
         if n <= 512:
             return self.calculate_entropy(stripped)
         max_ent = 0.0
-        for start in range(0, max(1, n - 512 + 1), 128):
+        for start in range(0, max(1, n - 512 + 1), 256):
             ent = self.calculate_entropy(stripped[start:start + 512])
             if ent > max_ent:
                 max_ent = ent
@@ -2958,6 +2980,11 @@ class SupplyChainDetector:
         "AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|"
         "AZURE_CLIENT_SECRET|OPENAI_API_KEY|ANTHROPIC_API_KEY|"
         "SLACK_TOKEN|DISCORD_TOKEN|STRIPE_KEY|DATABASE_URL|CI_JOB_TOKEN|DOCKER_PASSWORD"
+    )
+    _EXFIL_SENSITIVE_ENV_KEY_NAMES = (
+        "NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN|"
+        "AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|"
+        "AZURE_CLIENT_SECRET|SLACK_TOKEN|DISCORD_TOKEN|STRIPE_KEY|CI_JOB_TOKEN|DOCKER_PASSWORD"
     )
     _SENSITIVE_OS_RECON_FUNCS = (
         "userInfo", "networkInterfaces", "hostname", "homedir",
@@ -3008,30 +3035,26 @@ class SupplyChainDetector:
         self, manifest: Optional[Dict[str, Any]], pkg_dir: Optional[str] = None
     ) -> bool:
         """
-        Returns True if the manifest declares a non-whitelisted lifecycle install/uninstall hook
-        or an extended hook resolving to suspicious commands or inline `node -e/-p`.
-        Respects both `_is_whitelisted_command` (e.g. `husky install`) and benign local node
-        banner scripts (`_is_benign_local_node_script`, never applied to `preinstall`).
+        Returns True if the manifest declares a non-whitelisted consumer install/uninstall hook
+        or an author publish/build hook resolving to explicit suspicious command patterns.
         """
         if not isinstance(manifest, dict):
             return False
         scripts = manifest.get("scripts", {})
         if not isinstance(scripts, dict):
             return False
-        install_hooks = {
-            "preinstall", "install", "postinstall",
-            "preuninstall", "uninstall", "postuninstall",
-        }
-        for hook in EXTENDED_SANDBOX_HOOKS:
+        for hook in SUSPICIOUS_LIFECYCLE_HOOKS + AUTHOR_PUBLISH_HOOKS:
             if hook not in scripts:
                 continue
             raw_cmd = str(scripts[hook]).strip()
             if not raw_cmd:
                 continue
-            if self._is_whitelisted_command(raw_cmd, scripts=scripts, pkg_dir=pkg_dir):
-                continue
-            if pkg_dir and self._is_benign_local_node_script(hook, raw_cmd, pkg_dir):
-                continue
+            is_author_hook = hook in AUTHOR_PUBLISH_HOOKS
+            if not is_author_hook:
+                if self._is_whitelisted_command(raw_cmd, scripts=scripts, pkg_dir=pkg_dir):
+                    continue
+                if pkg_dir and self._is_benign_local_node_script(hook, raw_cmd, pkg_dir):
+                    continue
             resolved = self._resolve_script_chain(raw_cmd, scripts)
             cmds_to_check = [s for _, s in resolved] if resolved else [raw_cmd]
             if resolved and raw_cmd not in cmds_to_check:
@@ -3040,20 +3063,16 @@ class SupplyChainDetector:
                 sub_s = sub_cmd.strip()
                 if not sub_s:
                     continue
-                if self._is_whitelisted_command(sub_s, scripts=scripts, pkg_dir=pkg_dir):
-                    continue
-                if pkg_dir and self._is_benign_local_node_script(hook, sub_s, pkg_dir):
-                    continue
+                if not is_author_hook:
+                    if self._is_whitelisted_command(sub_s, scripts=scripts, pkg_dir=pkg_dir):
+                        continue
+                    if pkg_dir and self._is_benign_local_node_script(hook, sub_s, pkg_dir):
+                        continue
                 is_bridge_parent = bool(resolved and idx_c == len(cmds_to_check) - 1)
-                if hook in install_hooks and not is_bridge_parent:
+                if not is_author_hook and not is_bridge_parent:
                     return True
                 deobf = self._deobfuscate_shell_cmd(sub_s)
-                if re.search(r"\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b", deobf, re.IGNORECASE):
-                    return True
-                if any(
-                    re.search(p, sub_s, re.IGNORECASE) or re.search(p, deobf, re.IGNORECASE)
-                    for p, _ in SUSPICIOUS_SCRIPT_PATTERNS
-                ):
+                if self._match_suspicious_hook_patterns(sub_s, deobf, is_author_hook=is_author_hook):
                     return True
         return False
 
@@ -3159,12 +3178,16 @@ class SupplyChainDetector:
         return aliases, destructured
 
     def _analyze_decode_eval_flows(
-        self, norm_code: str, has_net_sink: bool, has_suspicious_hook: bool
+        self,
+        norm_code: str,
+        has_net_sink: bool,
+        has_suspicious_hook: bool,
+        is_minified: bool = False,
     ) -> Tuple[bool, bool]:
         """
         Detects Rule 2.2 decoded-payload-to-eval flows via proximity (<= 800 chars) OR
-        1-2 hop variable taint linking, and gates `vm.runIn*` / `new vm.Script` execution
-        behind decode pairing, network sinks, or suspicious lifecycle hooks.
+        1-2 hop variable taint linking (skipped on minified bundles), and gates `vm.runIn*` /
+        `new vm.Script` execution behind decode pairing or suspicious hook + network sink.
         """
         code = re.sub(
             r"(?:\bnew\s+)?Function\s*\(\s*['\"`]return\s+this['\"`]\s*\)|"
@@ -3196,7 +3219,6 @@ class SupplyChainDetector:
             r"\(\s*0\s*,\s*eval\s*\)\s*\(",
             r"\bReflect\.construct\s*\(\s*Function\b",
             r"(?:\bModule\._compile|[\w$\)\]]\s*\._compile)\s*\(",
-            r"\.\s*constructor\s*\(",
         ]
         # Catch direct aliases of `eval` (`const fn = eval` / `global.eval`) and `Function` (`const F = Function`)
         eval_alias_re = re.compile(
@@ -3222,9 +3244,12 @@ class SupplyChainDetector:
             )
         vm_sink_re = re.compile("|".join(vm_parts))
 
+        vm_matches = list(vm_sink_re.finditer(code))
+        if is_minified:
+            return False, bool(vm_matches and has_suspicious_hook and has_net_sink)
+
         decode_matches = list(decode_re.finditer(code))
         eval_matches = list(eval_sink_re.finditer(code))
-        vm_matches = list(vm_sink_re.finditer(code))
 
         has_linked_decode_eval = False
         vm_has_decode = False
@@ -3248,7 +3273,7 @@ class SupplyChainDetector:
             assigns = self._extract_js_assignments(code)
             tainted_vars: Set[str] = set()
             for lhs, rhs in assigns:
-                if decode_re.search(rhs):
+                if len(lhs) >= 2 and decode_re.search(rhs):
                     tainted_vars.add(lhs)
             for _ in range(2):
                 if not tainted_vars:
@@ -3257,7 +3282,7 @@ class SupplyChainDetector:
                     r"\b(?:" + "|".join(re.escape(v) for v in sorted(tainted_vars)) + r")\b"
                 )
                 for lhs, rhs in assigns:
-                    if taint_ref_re.search(rhs):
+                    if len(lhs) >= 2 and taint_ref_re.search(rhs):
                         tainted_vars.add(lhs)
 
             if tainted_vars:
@@ -3278,15 +3303,15 @@ class SupplyChainDetector:
                         break
 
         has_risky_vm_eval = bool(
-            vm_matches and (vm_has_decode or has_net_sink or has_suspicious_hook)
+            vm_matches and (vm_has_decode or (has_suspicious_hook and has_net_sink))
         )
         return has_linked_decode_eval, has_risky_vm_eval
 
     def _analyze_recon_and_net_sinks(self, norm_code: str) -> Dict[str, Any]:
         """
         Extracts host/credential recon signals (including ES6 destructuring/aliases of `os`/`dns`,
-        sensitive `process.env` access/serialization, and credential file reads) alongside outbound
-        network sinks (built-in modules, `fetch`/`WebSocket`, and third-party HTTP clients).
+        high-risk `process.env` exfiltration access, and Tier-1 host credential reads) alongside
+        outbound network sinks (built-in modules, `fetch`/`WebSocket`, and third-party HTTP clients).
         """
         os_funcs: Set[str] = set()
         high_risk_recon = False
@@ -3312,63 +3337,82 @@ class SupplyChainDetector:
                 if orig in ("userInfo", "networkInterfaces"):
                     high_risk_recon = True
 
-        # Direct, inline-require, aliased & destructured `dns` recon and lookup/resolve sinks
+        # Direct, inline-require, aliased & destructured `dns` recon and resolve/lookup sinks
         has_net_sink = False
+        has_dns_lookup = False
         dns_aliases, dns_destr = self._parse_js_module_bindings(norm_code, ("dns",))
         dns_ident_parts = ["dns"] + sorted(re.escape(t) for t in dns_aliases)
         dns_target_re_part = rf"(?:\b(?:{'|'.join(dns_ident_parts)})|require\s*\(\s*['\"`](?:node:)?dns['\"`]\s*\))"
         if re.search(rf"{dns_target_re_part}\s*\.\s*getServers\s*\(", norm_code):
             os_funcs.add("getServers")
             high_risk_recon = True
-        if re.search(rf"{dns_target_re_part}\s*\.\s*(?:lookup|resolve\w*)\s*\(", norm_code):
+        if re.search(rf"{dns_target_re_part}\s*\.\s*resolve\w*\s*\(", norm_code):
             has_net_sink = True
+        if re.search(rf"{dns_target_re_part}\s*\.\s*lookup\s*\(", norm_code):
+            has_dns_lookup = True
 
         for orig, local in dns_destr:
             if orig == "getServers" and re.search(rf"\b{re.escape(local)}\s*\(", norm_code):
                 os_funcs.add("getServers")
                 high_risk_recon = True
-            elif (orig == "lookup" or orig.startswith("resolve")) and re.search(
-                rf"\b{re.escape(local)}\s*\(", norm_code
-            ):
+            elif orig.startswith("resolve") and re.search(rf"\b{re.escape(local)}\s*\(", norm_code):
                 has_net_sink = True
+            elif orig == "lookup" and re.search(rf"\b{re.escape(local)}\s*\(", norm_code):
+                has_dns_lookup = True
 
-        # Sensitive `process.env` access / full-env serialization (excluding child_process `{ env: { ...process.env } }` options)
+        # High-risk `process.env` exfiltration access / JSON serialization (excluding benign Object.keys/assign/AI-DB keys)
         env_aliases = ["process\\.env"]
         for em in re.finditer(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.env\b", norm_code):
             env_aliases.append(re.escape(em.group(1)))
         env_alt = "|".join(env_aliases)
-        if re.search(
-            rf"(?:{env_alt})(?:\s*\.\s*|\s*\[\s*['\"`])(?:{self._SENSITIVE_ENV_KEY_NAMES})\b|"
-            rf"\{{[^}}]*\b(?:{self._SENSITIVE_ENV_KEY_NAMES})\b[^}}]*\}}\s*=\s*(?:{env_alt})\b|"
-            rf"\bJSON\.stringify\s*\(\s*(?:{env_alt})\s*[,)]|"
-            rf"\b(?:headers|body|data|json|payload|params|query)\s*:\s*(?:{env_alt})\b|"
-            rf"\bObject\.(?:keys|entries|values)\s*\(\s*(?:{env_alt})\s*\)|"
-            rf"\bObject\.assign\s*\([^;\n]{{0,100}}?,\s*(?:{env_alt})\b",
+        env_key_matches = re.findall(
+            rf"(?:{env_alt})(?:\s*\.\s*|\s*\[\s*['\"`])({self._EXFIL_SENSITIVE_ENV_KEY_NAMES})\b|"
+            rf"\{{[^}}]*\b({self._EXFIL_SENSITIVE_ENV_KEY_NAMES})\b[^}}]*\}}\s*=\s*(?:{env_alt})\b",
             norm_code,
-        ):
-            high_risk_recon = True
-        else:
-            for sp_m in re.finditer(rf"\.\.\.\s*(?:{env_alt})\b", norm_code):
-                prefix = norm_code[max(0, sp_m.start() - 120):sp_m.start()]
-                in_env_option = bool(re.search(r"\benv\s*:\s*\{[^}]*$", prefix))
-                in_exfil_wrap = bool(
-                    re.search(r"(?:JSON\.stringify\s*\(|\b(?:headers|body|data|json|payload)\s*:)[^;\n]{0,100}$", prefix)
+        )
+        matched_env_keys = {k for tup in env_key_matches for k in tup if k}
+        has_bulk_env_exfil = bool(
+            re.search(
+                rf"\bJSON\.stringify\s*\(\s*(?:{env_alt})\s*[,)]|"
+                rf"\b(?:headers|body|data|json|payload|params|query)\s*:\s*(?:{env_alt})\b",
+                norm_code,
+            )
+        )
+        env_recon_triggered = False
+        if has_bulk_env_exfil:
+            env_recon_triggered = True
+        elif matched_env_keys:
+            if matched_env_keys <= {"GITHUB_TOKEN", "GH_TOKEN"}:
+                urls = re.findall(r"https?://([A-Za-z0-9.-]+)", norm_code, re.IGNORECASE)
+                is_github_api_only = bool(urls) and all(
+                    u.lower() in ("api.github.com", "github.com") or u.lower().endswith(".github.com")
+                    for u in urls
                 )
-                if not in_env_option or in_exfil_wrap:
-                    high_risk_recon = True
-                    break
+                if not is_github_api_only:
+                    env_recon_triggered = True
+            else:
+                env_recon_triggered = True
+        if env_recon_triggered:
+            high_risk_recon = True
 
-        # Sensitive host/credential file read
+        # Tier-1 sensitive host/credential file read
         if (
-            SENSITIVE_SOURCE_PATH_REGEX.search(norm_code)
-            or self._classify_sensitive_host_path(norm_code)[0] > 0
+            self._classify_sensitive_host_path(norm_code)[0] == 1
             or re.search(
                 r"\b(?:readFile|readFileSync|createReadStream|openSync|readdirSync|readdir)\s*\("
-                r"[^;\n]{0,180}?(?:\.npmrc|\.ssh|id_rsa|id_ed25519|\.aws|/etc/passwd|/etc/shadow|\.docker/config\.json|\.kube/config)",
+                r"[^;\n]{0,180}?(?:\.ssh|id_rsa|id_ed25519|/etc/passwd|/etc/shadow|/etc/sudoers|/proc/self/environ)",
                 norm_code,
             )
         ):
             high_risk_recon = True
+
+        if has_dns_lookup and (
+            "userInfo" in os_funcs
+            or "getServers" in os_funcs
+            or env_recon_triggered
+            or self._classify_sensitive_host_path(norm_code)[0] == 1
+        ):
+            has_net_sink = True
 
         # Built-in / global / inline-require network sinks
         if not has_net_sink and re.search(
@@ -3531,11 +3575,21 @@ class SupplyChainDetector:
                     continue
                 if not is_js_ext and not self._is_scannable_text_file(full_p):
                     continue
-                # Skip unit test files unless explicitly referenced as a declared entrypoint
+                # Skip unit test, example, doc, fixture, and mock files unless explicitly declared as an entrypoint
                 if not is_declared_ep:
-                    if rel_f.startswith(("test/", "tests/", "__tests__/", "spec/")):
+                    rel_l = rel_f.lower()
+                    if rel_l.startswith((
+                        "test/", "tests/", "__tests__/", "spec/", "example/", "examples/",
+                        "docs/", "doc/", "benchmark/", "benchmarks/", "fixtures/", "__mocks__/",
+                        "integration/", "e2e/",
+                    )):
                         continue
-                    if re.search(r"\.(test|spec)\.(js|cjs|mjs)$", rel_f, re.IGNORECASE):
+                    if any(seg in f"/{rel_l}" for seg in (
+                        "/test/", "/tests/", "/__tests__/", "/test-utils/", "/testing/",
+                        "/__mocks__/", "/fixtures/", "/examples/", "/example/",
+                    )):
+                        continue
+                    if re.search(r"(?:\.(?:test|spec|mock)|[-_](?:test|spec|mock))\.(?:js|cjs|mjs)$", rel_l):
                         continue
                 if full_p not in seen_js_paths:
                     seen_js_paths.add(full_p)
@@ -3552,6 +3606,18 @@ class SupplyChainDetector:
                         js_files.append(full_p)
                 elif fp_l.endswith((".sh", ".bash", ".ps1", ".bat", ".cmd", ".py")):
                     nm_script_files.append(full_p)
+
+        if len(js_files) > 150:
+            def _js_priority(fp: str) -> Tuple[int, int, str]:
+                rl = os.path.relpath(fp, pkg_dir).replace("\\", "/").lower()
+                is_ep = 0 if rl in entrypoints else 1
+                is_dist = 1 if (
+                    rl.startswith(("dist/", "build/", "umd/", "bundles/", "cjs/", "esm/"))
+                    or "/dist/" in f"/{rl}"
+                    or rl.endswith(".min.js")
+                ) else 0
+                return (is_ep, is_dist, rl)
+            js_files = sorted(js_files, key=_js_priority)[:150]
 
         # Scan budgeted shell/Python scripts bundled inside node_modules/
         py_net_re = re.compile(r"\b(?:urllib\.request|requests\.(?:get|post|put)|http\.client|socket\.connect|socket\.create_connection)\b")
@@ -3608,7 +3674,7 @@ class SupplyChainDetector:
         pkg_has_unsafe_cp = False
         pkg_has_jsfuck_or_xor = False
         pending_tier2_paths: List[Tuple[str, str]] = []
-        pending_entropy_alerts: List[Tuple[float, str]] = []
+        entropy_candidates: List[Tuple[bool, str, str]] = []
         self._last_l2_obf_corroborated = False
 
         for file_path in js_files:
@@ -3662,6 +3728,11 @@ class SupplyChainDetector:
                     "CRITICAL",
                     f"Hardcoded external exfiltration/OAST/IMDS endpoint '{exfil_hit}' in {rel_path}"
                 )
+            bare_bot_match = (
+                re.search(r"api\.telegram\.org/bot|discord(?:app)?\.com/api/webhooks/", norm_code, re.IGNORECASE)
+                if not exfil_hit
+                else None
+            )
 
             # 4. Recon (OS/DNS destructuring/aliases, sensitive process.env, credential paths) + Net Sinks (+45 CRITICAL)
             recon_info = self._analyze_recon_and_net_sinks(norm_code)
@@ -3688,7 +3759,7 @@ class SupplyChainDetector:
 
             # 2. Proximity (<=800 chars) or taint-linked Decode -> Eval / Conditional VM (+45 CRITICAL)
             has_linked_decode_eval, has_risky_vm_eval = self._analyze_decode_eval_flows(
-                norm_code, file_has_net_sink, has_suspicious_hook
+                norm_code, file_has_net_sink, has_suspicious_hook, is_minified=is_minified
             )
             if has_linked_decode_eval or has_risky_vm_eval:
                 detail_msg = (
@@ -3717,7 +3788,7 @@ class SupplyChainDetector:
                     f"Low-level process.binding/linkedBinding('spawn_sync') evasion in {rel_path}"
                 )
             elif has_cp_calls:
-                if in_dangerous_window or has_linked_decode_eval or has_crit_exec:
+                if in_dangerous_window or has_linked_decode_eval:
                     record_l2(
                         "child_process_high",
                         45,
@@ -3772,7 +3843,9 @@ class SupplyChainDetector:
                 cross_has_exec_or_obf = True
 
             # 6. Heavy Obfuscation Signatures (Rule 2.6: +40 HIGH)
-            obf_desc = self._detect_heavy_obfuscation(content, no_comments, norm_code=norm_code)
+            obf_desc = self._detect_heavy_obfuscation(
+                content, no_comments, norm_code=norm_code, is_minified=is_minified
+            )
             if obf_desc:
                 cross_has_exec_or_obf = True
                 if obf_desc.startswith(("JSFuck", "XOR")):
@@ -3783,6 +3856,30 @@ class SupplyChainDetector:
                     "Obfuscation / Dynamic Exec Pattern",
                     "HIGH",
                     f"{obf_desc} detected in {rel_path}",
+                )
+
+            if bare_bot_match and (
+                has_suspicious_hook
+                or (
+                    not is_minified
+                    and (
+                        file_has_strong_recon
+                        or has_crit_exec
+                        or has_linked_decode_eval
+                        or is_unsafe_cp
+                        or bool(obf_desc)
+                    )
+                )
+            ):
+                pkg_has_net_sink = True
+                if not is_minified:
+                    cross_has_net_sink = True
+                record_l2(
+                    "malicious_exfil_endpoint",
+                    50,
+                    "Suspicious Exfiltration Endpoint",
+                    "CRITICAL",
+                    f"Exfiltration webhook/bot endpoint '{bare_bot_match.group(0)}' paired with risky context in {rel_path}",
                 )
 
             # 7. Sensitive Host Path / Marker Targeting (Rule 2.7: Tier 1 +40 HIGH, Tier 2 Context-Gated)
@@ -3863,9 +3960,8 @@ class SupplyChainDetector:
                     f"Suspicious horizontal whitespace padding (>=200 spaces/tabs or >=50 tabs) in {rel_path}",
                 )
 
-            win_entropy = self._calculate_windowed_entropy(content)
-            if len(content) > 200 and ((not is_minified and win_entropy > 5.65) or win_entropy > 6.15):
-                pending_entropy_alerts.append((win_entropy, rel_path))
+            if len(content) > 200:
+                entropy_candidates.append((is_minified, no_comments[:262144], rel_path))
 
         # Cross-file recon -> exfil correlation for small non-minified packages (<= 5 non-minified files)
         if (
@@ -3908,21 +4004,27 @@ class SupplyChainDetector:
                     f"Credential/tool config path targeted alongside cross-file network/exec/obfuscation in {t2_rel}: {t2_desc}",
                 )
 
-        # Anti-FP Gating for Rule 2.9: record high entropy only when supporting exec/structural indicator exists
+        # Anti-FP Gating for Rule 2.9: compute windowed entropy only when supporting exec/structural indicator exists
         has_entropy_support = bool(
             has_suspicious_hook
             or has_any_cp_call
             or any(k != "sensitive_host_path_cfg" for k in triggered_rules)
         )
-        if pending_entropy_alerts and has_entropy_support:
-            max_ent, max_rel = max(pending_entropy_alerts, key=lambda x: x[0])
-            record_l2(
-                "high_entropy_source",
-                15,
-                "High Entropy Code Section",
-                "MEDIUM",
-                f"Windowed entropy of {max_rel} reaches {max_ent:.2f} (packed/obfuscated indicator)",
-            )
+        if entropy_candidates and has_entropy_support:
+            pending_entropy_alerts: List[Tuple[float, str]] = []
+            for cand_minified, cand_src, cand_rel in entropy_candidates:
+                win_entropy = self._calculate_windowed_entropy(cand_src, already_stripped=True)
+                if (not cand_minified and win_entropy > 5.65) or win_entropy > 6.15:
+                    pending_entropy_alerts.append((win_entropy, cand_rel))
+            if pending_entropy_alerts:
+                max_ent, max_rel = max(pending_entropy_alerts, key=lambda x: x[0])
+                record_l2(
+                    "high_entropy_source",
+                    15,
+                    "High Entropy Code Section",
+                    "MEDIUM",
+                    f"Windowed entropy of {max_rel} reaches {max_ent:.2f} (packed/obfuscated indicator)",
+                )
 
         self._last_l2_obf_corroborated = bool(
             pkg_has_jsfuck_or_xor
@@ -3967,9 +4069,10 @@ class SupplyChainDetector:
         """
         active_hooks: Dict[str, str] = {}
         target_files: List[str] = []
-        declared_entrypoints = self._extract_declared_entrypoints(pkg_dir, manifest)
 
         def add_file_if_valid(rel_or_abs: str, from_hook: bool = False):
+            if not from_hook and len(target_files) >= 5:
+                return
             clean_rel = rel_or_abs.strip().strip("'\"")
             if not clean_rel:
                 return
@@ -3983,15 +4086,14 @@ class SupplyChainDetector:
                     full_p = os.path.normpath(os.path.join(pkg_dir, rel_norm))
             if not rel_norm or not os.path.isfile(full_p):
                 return
-            # Avoid running unit test suites of benign packages unless declared as entrypoint/hook target
-            if not from_hook and rel_norm not in declared_entrypoints:
-                if rel_norm.startswith(("test/", "tests/", "__tests__/", "spec/", "example/", "examples/")):
+            if not from_hook:
+                if self._IGNORED_TEST_DOC_SEG_RE.search(rel_norm):
                     return
-                if re.search(r"\.(test|spec)\.(js|cjs|mjs)$", rel_norm, re.IGNORECASE):
+                if re.search(r"\.(test|spec|mock)\.(js|cjs|mjs)$", rel_norm, re.IGNORECASE):
                     return
-                # Skip huge bundled compiler files (> 512 KB) unless explicitly invoked by a lifecycle hook
+                # Skip large bundled files (> 256 KB) unless explicitly invoked by a lifecycle hook
                 try:
-                    if os.path.getsize(full_p) > 512 * 1024:
+                    if os.path.getsize(full_p) > 256 * 1024:
                         return
                 except OSError:
                     return
@@ -4000,38 +4102,76 @@ class SupplyChainDetector:
 
         scripts = manifest.get("scripts", {})
         if isinstance(scripts, dict):
-            for hook in EXTENDED_SANDBOX_HOOKS:
-                if hook in scripts:
-                    cmd = str(scripts[hook]).strip()
-                    if not cmd:
-                        continue
-                    bridged_bad = False
-                    for sub_name, sub_cmd in self._resolve_script_chain(cmd, scripts):
-                        deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
-                        if re.search(r"\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b", deobf_sub, re.IGNORECASE) or any(
-                            re.search(p, sub_cmd, re.IGNORECASE) or re.search(p, deobf_sub, re.IGNORECASE)
-                            for p, _ in SUSPICIOUS_SCRIPT_PATTERNS
-                        ):
-                            bridged_bad = True
-                            active_hooks[f"{hook}->{sub_name}"] = sub_cmd
-                            for tgt in self._extract_node_targets_from_cmd(sub_cmd) + self._extract_node_targets_from_cmd(deobf_sub):
-                                add_file_if_valid(tgt, from_hook=True)
-                    if not bridged_bad and self._is_whitelisted_command(cmd, scripts=scripts, pkg_dir=pkg_dir):
-                        continue
+            for hook in SUSPICIOUS_LIFECYCLE_HOOKS:
+                if hook not in scripts:
+                    continue
+                cmd = str(scripts[hook]).strip()
+                if not cmd:
+                    continue
+                bridged_bad = False
+                for sub_name, sub_cmd in self._resolve_script_chain(cmd, scripts):
+                    deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
+                    if self._match_suspicious_hook_patterns(sub_cmd, deobf_sub, is_author_hook=False):
+                        bridged_bad = True
+                        active_hooks[f"{hook}->{sub_name}"] = sub_cmd
+                        for tgt in self._extract_node_targets_from_cmd(sub_cmd) + self._extract_node_targets_from_cmd(deobf_sub):
+                            add_file_if_valid(tgt, from_hook=True)
+                if not bridged_bad and (
+                    self._is_whitelisted_command(cmd, scripts=scripts, pkg_dir=pkg_dir)
+                    or self._is_benign_local_node_script(hook, cmd, pkg_dir)
+                ):
+                    continue
+                active_hooks[hook] = cmd
+                deobf_cmd = self._deobfuscate_shell_cmd(cmd)
+                for tgt in self._extract_node_targets_from_cmd(cmd) + self._extract_node_targets_from_cmd(deobf_cmd):
+                    add_file_if_valid(tgt, from_hook=True)
+
+            for hook in AUTHOR_PUBLISH_HOOKS:
+                if hook not in scripts:
+                    continue
+                cmd = str(scripts[hook]).strip()
+                if not cmd:
+                    continue
+                deobf_cmd = self._deobfuscate_shell_cmd(cmd)
+                bridged_bad = False
+                for sub_name, sub_cmd in self._resolve_script_chain(cmd, scripts):
+                    deobf_sub = self._deobfuscate_shell_cmd(sub_cmd)
+                    if self._match_suspicious_hook_patterns(sub_cmd, deobf_sub, is_author_hook=True):
+                        bridged_bad = True
+                        active_hooks[f"{hook}->{sub_name}"] = sub_cmd
+                        for tgt in self._extract_node_targets_from_cmd(sub_cmd) + self._extract_node_targets_from_cmd(deobf_sub):
+                            add_file_if_valid(tgt, from_hook=True)
+                if bridged_bad or self._match_suspicious_hook_patterns(cmd, deobf_cmd, is_author_hook=True):
                     active_hooks[hook] = cmd
-                    deobf_cmd = self._deobfuscate_shell_cmd(cmd)
-                    # Extract any Node preload (-r/--require/--import) or script (including extensionless) in the hook
                     for tgt in self._extract_node_targets_from_cmd(cmd) + self._extract_node_targets_from_cmd(deobf_cmd):
                         add_file_if_valid(tgt, from_hook=True)
 
-        # Include declared entrypoints from main, bin, exports, and hooks
-        for ep in sorted(declared_entrypoints):
-            add_file_if_valid(ep)
+        # Include primary entrypoints (main, default index.*, and up to 2 bin entrypoints)
+        main_entry = manifest.get("main")
+        if isinstance(main_entry, str) and main_entry.strip():
+            resolved_main = self._resolve_pkg_script_candidate(pkg_dir, main_entry)
+            if resolved_main:
+                add_file_if_valid(resolved_main)
 
-        # Always check default root entrypoints
         add_file_if_valid("index.js")
-        add_file_if_valid("index.mjs")
         add_file_if_valid("index.cjs")
+        add_file_if_valid("index.mjs")
+
+        bin_field = manifest.get("bin")
+        if isinstance(bin_field, str) and bin_field.strip():
+            resolved_bin = self._resolve_pkg_script_candidate(pkg_dir, bin_field)
+            if resolved_bin:
+                add_file_if_valid(resolved_bin)
+        elif isinstance(bin_field, dict):
+            added_bins = 0
+            for v in bin_field.values():
+                if added_bins >= 2 or len(target_files) >= 5:
+                    break
+                if isinstance(v, str) and v.strip():
+                    resolved_bin = self._resolve_pkg_script_candidate(pkg_dir, v)
+                    if resolved_bin:
+                        add_file_if_valid(resolved_bin)
+                        added_bins += 1
 
         # If still no target files found, inspect up to 3 root/non-test JS files
         if not target_files:
@@ -4052,12 +4192,12 @@ class SupplyChainDetector:
         if nm_info.get("needs_l2_scan"):
             added_nm = 0
             for full_p in nm_info.get("budget_code_files", []):
+                if added_nm >= 3 or len(target_files) >= 5:
+                    break
                 if full_p.lower().endswith((".js", ".cjs", ".mjs")):
                     rel_nm = os.path.relpath(full_p, pkg_dir).replace("\\", "/")
                     add_file_if_valid(rel_nm)
                     added_nm += 1
-                    if added_nm >= 3:
-                        break
 
         return active_hooks, target_files
 
@@ -4129,12 +4269,22 @@ class SupplyChainDetector:
                 data = json.loads(telemetry_line)
                 events = data.get("events", [])
         except subprocess.TimeoutExpired:
-            events = [{
-                "category": "SANDBOX_EVASION",
-                "api": "sandbox.timeout",
-                "detail": "Package execution timed out (>2.0s) in behavioral sandbox (infinite loop / stall evasion).",
-                "severity": "HIGH"
-            }]
+            is_small_target = False
+            if target_files and len(target_files) <= 2:
+                try:
+                    is_small_target = all(
+                        os.path.getsize(os.path.join(pkg_dir, rf)) < 64 * 1024
+                        for rf in target_files
+                    )
+                except OSError:
+                    is_small_target = False
+            if active_hooks or is_small_target:
+                events = [{
+                    "category": "SANDBOX_EVASION",
+                    "api": "sandbox.timeout",
+                    "detail": "Package execution timed out (>2.0s) in behavioral sandbox (infinite loop / stall evasion).",
+                    "severity": "HIGH"
+                }]
         except Exception:
             events = []
 
@@ -4330,6 +4480,7 @@ class SupplyChainDetector:
         """
         temp_extract_dir = None
         actual_pkg_dir = pkg_dir
+        self._nm_inspect_cache.clear()
         is_tarball_input = os.path.isfile(pkg_dir) and pkg_dir.lower().endswith((".tgz", ".tar.gz", ".tar"))
 
         # Allow passing a .tgz / .tar.gz / .tar tarball directly to scan_package
@@ -4507,9 +4658,13 @@ class SupplyChainDetector:
                     "heavy_js_obfuscation" in triggered_l2_rules
                     and "sensitive_host_path" in triggered_l2_rules
                 )
+                other_strong_l2 = [
+                    k for k in triggered_l2_rules
+                    if k not in ("heavy_js_obfuscation", "high_entropy_source", "sensitive_host_path_cfg")
+                ]
                 has_corroborated_obf = (
                     "heavy_js_obfuscation" in triggered_l2_rules
-                    and bool(getattr(self, "_last_l2_obf_corroborated", False))
+                    and bool(other_strong_l2)
                 )
                 keep_rules = set(HIGH_CONFIDENCE_STANDALONE_L2_RULES)
                 if has_corroborated_obf or has_obf_and_sensitive:
@@ -4563,6 +4718,7 @@ class SupplyChainDetector:
             }
             return telemetry
         finally:
+            self._nm_inspect_cache.clear()
             if temp_extract_dir and os.path.exists(temp_extract_dir):
                 shutil.rmtree(temp_extract_dir, ignore_errors=True)
 
