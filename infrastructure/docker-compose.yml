@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   local-registry:
-    image: verdaccio/verdaccio:latest
+    image: verdaccio/verdaccio:5
     container_name: local-registry
     ports:
       - "4873:4873"
