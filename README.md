@@ -131,11 +131,11 @@ python3 benchmark/bench_real.py --part all --final            # chạy DUY NHẤ
 
 ## 5. Cấu hình máy ảo & Checklist an toàn (Hạng mục D)
 
-- **Cô lập hai lớp:** Mọi thử nghiệm thực hiện trong máy ảo Ubuntu (VMware Workstation) có chụp **Snapshot** trước khi chạy và **Rollback** sau khi hoàn tất; hạ tầng demo chạy trong mạng Docker bridge nội bộ, Verdaccio đã tắt hoàn toàn uplink ra Internet (`uplinks: {}`).
-- **Payload PoC vô hại 100%:** Các gói PoC trong `packages/` và `benchmark/evasion/` chỉ ghi chuỗi đánh dấu vào `/tmp/uit_marker_*.log` (hoặc `C:\Users\Public\uit_marker_*.log` trên Windows) và `console.log` — không C2 Internet, không đánh cắp thông tin xác thực, không rò rỉ dữ liệu, không persistence ngoài phạm vi.
+- **Cô lập hai lớp:** Mọi thử nghiệm dữ liệu thật thực hiện trong máy ảo **Oracle VirtualBox** (`SupplyChain-Sandbox`, Ubuntu 26.04.1 LTS, 4 vCPU, 13 GiB RAM) có chụp **Snapshot** trước khi chạy và **Rollback** sau khi hoàn tất; hạ tầng demo chạy trong mạng Docker bridge nội bộ, Verdaccio đã tắt hoàn toàn uplink ra Internet (`uplinks: {}`).
+- **Payload PoC vô hại 100%:** Các gói PoC trong `packages/` và `benchmark/evasion/` chỉ ghi chuỗi đánh dấu vào `/tmp/uit_marker_*.log` (hoặc `C:/Users/Public/uit_marker_*.log` trên Windows) và `console.log` — không C2 Internet, không đánh cắp thông tin xác thực, không rò rỉ dữ liệu, không persistence ngoài phạm vi.
 - **Tách biệt tĩnh/động với mẫu thật:** Bộ 500 gói độc DataDog **không** được commit vào repository; khi quét trong VM phải:
-  - [ ] Chụp Snapshot sạch trước khi giải nén/quét mẫu thật.
-  - [ ] Ngắt hoàn toàn card mạng VM (Disconnect Network Adapter; xác nhận `ping 1.1.1.1` thất bại).
-  - [ ] Gỡ thư mục chia sẻ giữa VM và máy thật (xác nhận `mount | grep -i hgfs` rỗng) và tắt copy/paste hai chiều.
-  - [ ] Tuyệt đối **không** chạy `npm install`, `node`, hay Layer 3 trên mẫu độc thật (`bench_real.py` khóa cứng Layer 3 và mọi lệnh tạo tiến trình con).
+  - [x] Chụp Snapshot sạch (`supplay chain`) trước khi quét mẫu thật.
+  - [x] Ngắt hoàn toàn kết nối Internet của VM (tắt NAT, chỉ giữ Host-Only nội bộ để thao tác qua SSH; xác nhận `ping -c 2 8.8.8.8` báo `Network is unreachable`).
+  - [x] Không gắn thư mục chia sẻ giữa VM và máy thật (xác nhận `mount | grep -iE 'vboxsf|hgfs'` rỗng).
+  - [x] Tuyệt đối **không** chạy `npm install`, `node`, hay Layer 3 trên mẫu độc thật (`bench_real.py` khóa cứng Layer 3 và mọi lệnh tạo tiến trình con).
   - [ ] Khôi phục Snapshot sau khi đã sao lưu kết quả log định lượng.
