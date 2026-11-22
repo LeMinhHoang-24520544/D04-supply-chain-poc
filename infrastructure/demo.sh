@@ -25,9 +25,18 @@
 
 set -euo pipefail
 
+# Prevent Git Bash (MINGW64) from mangling container paths like /app and /tmp/...
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+if command -v cygpath >/dev/null 2>&1; then
+  HOST_REPO_ROOT="$(cygpath -m "${REPO_ROOT}")"
+else
+  HOST_REPO_ROOT="${REPO_ROOT}"
+fi
+COMPOSE_FILE="${HOST_REPO_ROOT}/infrastructure/docker-compose.yml"
 LOG_DIR="${REPO_ROOT}/logs"
 LOG_FILE="${LOG_DIR}/docker_demo.log"
 RESET=0
@@ -45,9 +54,16 @@ done
 mkdir -p "${LOG_DIR}"
 exec > >(tee "${LOG_FILE}") 2>&1
 
-PYTHON_BIN="python3"
-if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-  PYTHON_BIN="python"
+PYTHON_BIN=""
+for cand in python3 python; do
+  if command -v "${cand}" >/dev/null 2>&1 && "${cand}" -c "import sys" >/dev/null 2>&1; then
+    PYTHON_BIN="${cand}"
+    break
+  fi
+done
+if [ -z "${PYTHON_BIN}" ]; then
+  echo "[!] ERROR: Working python/python3 interpreter not found."
+  exit 1
 fi
 
 banner() {
@@ -162,9 +178,9 @@ EOF
 "
 
 # Copy repo PoC and benign packages into container staging area
-docker cp "${REPO_ROOT}/packages/uit-benign" victim-consumer:/tmp/publish_stage/uit-benign
-docker cp "${REPO_ROOT}/packages/uit-core-auth" victim-consumer:/tmp/publish_stage/uit-core-auth-v99
-docker cp "${REPO_ROOT}/packages/uit-marker-lifecycle" victim-consumer:/tmp/publish_stage/uit-marker-lifecycle
+docker cp "${HOST_REPO_ROOT}/packages/uit-benign" victim-consumer:/tmp/publish_stage/uit-benign
+docker cp "${HOST_REPO_ROOT}/packages/uit-core-auth" victim-consumer:/tmp/publish_stage/uit-core-auth-v99
+docker cp "${HOST_REPO_ROOT}/packages/uit-marker-lifecycle" victim-consumer:/tmp/publish_stage/uit-marker-lifecycle
 
 publish_pkg() {
   local dir="$1"
@@ -193,19 +209,19 @@ publish_pkg "/tmp/publish_stage/uit-marker-lifecycle" "uit-marker-lifecycle@1.0.
 
 banner "STEP 3: PRE-INSTALL CI/CD SECURITY GATE (DEFENSE DEMO)"
 echo "[*] Preparing SHA-512 tampered artifact simulation..."
-"${PYTHON_BIN}" "${REPO_ROOT}/packages/uit-marker-tamper/simulate_tamper.py"
+"${PYTHON_BIN}" "${HOST_REPO_ROOT}/packages/uit-marker-tamper/simulate_tamper.py"
 
 for pkg in uit-benign uit-benign-native uit-benign-minified; do
   echo ""
   echo "[*] Gate check (expect PASS / exit 0): packages/${pkg}"
-  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/supply_chain_gate.py" "${REPO_ROOT}/packages/${pkg}"
+  "${PYTHON_BIN}" "${HOST_REPO_ROOT}/scripts/supply_chain_gate.py" "${HOST_REPO_ROOT}/packages/${pkg}"
 done
 
 for pkg in uit-core-auth uit-marker-lifecycle uit-marker-tamper; do
   echo ""
   echo "[*] Gate check (expect BLOCK / exit 1): packages/${pkg}"
   set +e
-  "${PYTHON_BIN}" "${REPO_ROOT}/scripts/supply_chain_gate.py" "${REPO_ROOT}/packages/${pkg}"
+  "${PYTHON_BIN}" "${HOST_REPO_ROOT}/scripts/supply_chain_gate.py" "${HOST_REPO_ROOT}/packages/${pkg}"
   RC=$?
   set -e
   echo "[+] supply_chain_gate.py returned exit code: ${RC}"
