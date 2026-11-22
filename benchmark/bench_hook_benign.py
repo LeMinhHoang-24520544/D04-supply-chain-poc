@@ -56,6 +56,18 @@ SEARCH_KEYWORDS = [
     "esbuild",
     "sharp",
     "rust",
+    "gyp",
+    "c++",
+    "cmake",
+    "addon",
+    "openssl",
+    "zlib",
+    "audio",
+    "usb",
+    "serialport",
+    "crypto",
+    "wasm",
+    "cli",
 ]
 MAX_TARBALL_BYTES = 20 * 1024 * 1024
 
@@ -177,13 +189,23 @@ def main():
     ap.add_argument("--target", type=int, default=120, help="Number of hook-bearing benign packages to collect")
     ap.add_argument("--threshold", type=int, default=35)
     ap.add_argument("--out-dir", default=os.path.join(HERE, "..", "logs"))
+    ap.add_argument("--tag", default="hook_benign_stress", help="Output filename prefix")
+    ap.add_argument("--exclude-from", default=None, help="Path to previous JSON whose package names must be excluded (for unseen Test 3)")
     args = ap.parse_args()
 
     _disable_l3()
 
+    excluded = set()
+    if args.exclude_from:
+        for path in [p.strip() for p in args.exclude_from.split(",") if p.strip()]:
+            if os.path.isfile(path):
+                prev = json.load(open(path, encoding="utf-8"))
+                excluded.update(r["name"] for r in prev.get("records", []) if "name" in r)
+        print(f"[*] Excluding {len(excluded)} previously seen packages", flush=True)
+
     print(f"[*] Gathering popular npm candidates across {len(SEARCH_KEYWORDS)} native/CLI keywords...", flush=True)
-    cands = gather_candidates(max_candidates=max(900, args.target * 10))
-    print(f"[+] Candidate pool: {len(cands)} unique packages. Filtering for active install hooks...", flush=True)
+    cands = [(n, v) for n, v in gather_candidates(max_candidates=max(2600, args.target * 26)) if n not in excluded]
+    print(f"[+] Candidate pool (after exclusions): {len(cands)} unique packages. Filtering for active install hooks...", flush=True)
 
     hook_entries = []
     with ThreadPoolExecutor(max_workers=12) as ex:
@@ -291,11 +313,11 @@ def main():
             print(f"\n  Latency: mean {statistics.mean(lats):.0f} ms, median {statistics.median(lats):.0f} ms, "
                   f"p95 {lats[int(0.95*(len(lats)-1))]:.0f} ms/pkg")
 
-        json_out = os.path.join(args.out_dir, "hook_benign_stress.json")
+        json_out = os.path.join(args.out_dir, f"{args.tag}.json")
         with open(json_out, "w", encoding="utf-8") as jf:
             json.dump({"n": n, "threshold": args.threshold, "records": recs}, jf, indent=2)
 
-        csv_out = os.path.join(args.out_dir, "hook_benign_fp.csv")
+        csv_out = os.path.join(args.out_dir, f"{args.tag}_fp.csv")
         with open(csv_out, "w", newline="", encoding="utf-8") as cf:
             w = csv.writer(cf)
             w.writerow(["name", "version", "risk_score", "l1_total", "l1_graph", "l2_source", "hooks", "rules"])

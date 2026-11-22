@@ -66,11 +66,11 @@ EXTENDED_SANDBOX_HOOKS = [
 # Legitimate build/banner commands allowed by the whitelist to minimize False Positive Rate (FPR)
 # Note: `npm/yarn/pnpm run <sub_script>` is resolved recursively via _resolve_script_chain
 WHITELISTED_HOOK_COMMANDS = [
-    r"^(?:npx\s+)?node-gyp\s+(?:rebuild|clean|configure|build|install)(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+)?)*$",
-    r"^(?:npx\s+)?(?:@mapbox/)?node-pre-gyp\s+install(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+)?)*$",
-    r"^(?:npx\s+)?prebuild-install(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+)?)*$",
+    r"^(?:npx\s+)?node-gyp(?:\s+(?:rebuild|clean|configure|build|install))+(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+|\s+[A-Za-z0-9_./:-]+)?)*$",
+    r"^(?:npx\s+)?(?:@mapbox/)?node-pre-gyp\s+install(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+|\s+[A-Za-z0-9_./:-]+)?)*$",
+    r"^(?:npx\s+)?prebuild-install(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+|\s+[A-Za-z0-9_./:-]+)?)*$",
     r"^(?:npx\s+)?node-gyp-build(?:\s+[A-Za-z0-9_./:-]+)*$",
-    r"^(?:npx\s+)?napi-build(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+)?)*$",
+    r"^(?:npx\s+)?napi-build(?:\s+--?[A-Za-z0-9_-]+(?:=[A-Za-z0-9_./:-]+|\s+[A-Za-z0-9_./:-]+)?)*$",
     r"^(?:npx\s+)?esbuild(?:\s+[A-Za-z0-9_./*=-]+)*$",
     r"^(?:npx\s+)?tsc(?:\s+(?:-[pwbv]|--[A-Za-z0-9_-]+|[A-Za-z0-9_./-]+))*$",
     r"^(?:npx\s+)?husky(?:\s+install)?$",
@@ -463,26 +463,45 @@ class SupplyChainDetector:
             r"(?:\.(?:include|include_dir|gyp|targets|path))?\s*\)?\s*;?\s*[\"']?\s*$",
             re.IGNORECASE,
         )
+        inline_node_re = re.compile(r"\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b", re.IGNORECASE)
+        inline_node_risk_re = re.compile(
+            r"child_process|\b(?:exec|execSync|spawn|spawnSync|execFile|execFileSync|fork)\b|"
+            r"\beval\s*\(|\bFunction\s*\(|Buffer\.from|\batob\b|\bbase64\b|https?://|\bfetch\b|"
+            r"\b(?:http|https|http2|net|dns|tls|dgram)\b|"
+            r"\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|unlink|rmSync|chmod)\b|"
+            r"\b(?:userInfo|networkInterfaces)\b|\bprocess\.env\b|\.npmrc|\.ssh|/tmp/|/var/tmp/|/dev/shm/|/etc/passwd|/etc/shadow",
+            re.IGNORECASE,
+        )
         suspicious_kw_re = re.compile(
             r"\b(?:curl|wget|netcat|ncat|socat|bash|sh|zsh|cmd|powershell|pwsh|"
             r"python\d?|perl|ruby|php|base64|openssl|xxd|eval|exec|spawn|child_process)\b|"
             r"(?:^|[;&|]\s*)nc\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9.-]+\s+\d{1,5}\b|-[lec]\b)|"
-            r"https?://|/tmp/|/var/tmp/|/dev/shm/|\.npmrc|\.ssh|\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b",
+            r"https?://|/tmp/|/var/tmp/|/dev/shm/|\.npmrc|\.ssh",
             re.IGNORECASE,
         )
 
+        inline_desc = "Inline Node.js code evaluation (-e/--eval/-p/--print)"
         findings: List[str] = []
         for raw_expr in self._extract_gyp_command_expansions(gyp_content):
-            norm_expr = raw_expr.replace('\\"', '"').replace("\\'", "'").strip()
+            norm_expr = re.sub(r"\\+(['\"])", r"\1", raw_expr).strip()
             if not norm_expr or benign_addon_re.match(norm_expr):
                 continue
             deobf_expr = self._deobfuscate_shell_cmd(norm_expr)
-            matched_desc = None
-            for pattern, desc in SUSPICIOUS_SCRIPT_PATTERNS:
-                if re.search(pattern, norm_expr, re.IGNORECASE) or re.search(pattern, deobf_expr, re.IGNORECASE):
-                    matched_desc = desc
-                    break
-            if matched_desc or suspicious_kw_re.search(deobf_expr):
+            matched_descs = [
+                desc for pattern, desc in SUSPICIOUS_SCRIPT_PATTERNS
+                if re.search(pattern, norm_expr, re.IGNORECASE) or re.search(pattern, deobf_expr, re.IGNORECASE)
+            ]
+            # For inline `node -p/-e` inside binding.gyp, require concrete risk tokens so benign
+            # build probes like `node -p "process.arch"` or `node -p "process.versions.node..."` do not FP.
+            if matched_descs == [inline_desc]:
+                if not (inline_node_risk_re.search(norm_expr) or inline_node_risk_re.search(deobf_expr)):
+                    matched_descs = []
+            matched_desc = matched_descs[0] if matched_descs else None
+            has_risky_node = bool(
+                inline_node_re.search(deobf_expr)
+                and (inline_node_risk_re.search(norm_expr) or inline_node_risk_re.search(deobf_expr))
+            )
+            if matched_desc or has_risky_node or suspicious_kw_re.search(deobf_expr):
                 preview = re.sub(r"\s+", " ", norm_expr)[:100]
                 reason = matched_desc or "Suspicious shell/network/execution command"
                 findings.append(f"{reason} in binding.gyp <!({preview})")
@@ -888,11 +907,11 @@ class SupplyChainDetector:
                     })
                 else:
                     has_suspicious_install_hook = True
-                    score += 40
+                    score += 25
                     findings.append({
                         "layer": "Layer 1 - Manifest",
                         "rule": f"Suspicious Lifecycle Hook: {hook}",
-                        "severity": "HIGH",
+                        "severity": "MEDIUM",
                         "detail": f"Detected active '{hook}' hook with command: {command}"
                     })
 
@@ -4659,7 +4678,7 @@ class SupplyChainDetector:
                 actual_pkg_dir, manifest_data, is_tarball=is_tarball_input
             )
             has_hard_l1_evidence = (
-                l1_manifest_score >= 40
+                l1_manifest_score >= 25
                 or l1_integrity_score > 0
                 or l1_graph_score >= 20
                 or bool(nm_info.get("needs_l2_scan"))
