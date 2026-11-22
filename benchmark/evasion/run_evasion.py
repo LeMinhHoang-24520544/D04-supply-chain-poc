@@ -46,7 +46,7 @@ def run(args):
     gt = json.load(open(os.path.join(args.dataset, "ground_truth.json")))
     pk = gt["packages"]
     if args.static_only:
-        D.SupplyChainDetector.analyze_behavioral_sandbox = lambda self, d, m: (0, [])
+        D.SupplyChainDetector.analyze_behavioral_sandbox = lambda self, *args, **kwargs: (0, [])
     det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold)
     rows = []
     t0 = time.perf_counter()

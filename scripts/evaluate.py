@@ -170,8 +170,9 @@ def run_evaluation(
                     "Avg_Latency_ms": raw_metrics["avg_latency_ms_per_package"]
                 },
                 "trade_off_conclusion": (
-                    "Enabling Layer 1 Whitelist and Layer 2 Context-Awareness eliminates False Positives "
-                    "on benign build-hook and minified libraries while maintaining high True Positive Recall."
+                    f"Whitelist ON vs OFF: FP {fp} vs {raw_fp}, FPR {prod_metrics['fpr'] * 100:.2f}% vs "
+                    f"{raw_metrics['fpr'] * 100:.2f}%, Recall {prod_metrics['recall'] * 100:.2f}% vs "
+                    f"{raw_metrics['recall'] * 100:.2f}%."
                 )
             },
             "category_detection_rates": category_breakdown

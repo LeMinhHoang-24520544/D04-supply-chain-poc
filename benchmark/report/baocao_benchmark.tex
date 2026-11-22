@@ -21,6 +21,8 @@
 \begin{document}
 \maketitle
 
+\noindent\textbf{Lưu ý phiên bản:} Tài liệu này ghi nhận kết quả đánh giá của \textbf{bản detector ban đầu (v1, commit \texttt{039203e})}, khi Layer~3 mới dừng ở mức dò biểu thức chính quy trên chuỗi script. Kết quả của bản detector đa lớp hoàn chỉnh (có hộp cát động \texttt{sandbox\_runner.js}, cổng liên lớp và thí nghiệm né tránh có kiểm soát) được trình bày trong báo cáo chính \texttt{report/baocao\_dean.pdf}.
+
 \begin{abstract}
 Báo cáo trình bày phương pháp và kết quả đo hiệu năng của bộ phát hiện đa lớp \texttt{detector.py} trên hai tập dữ liệu: tập tổng hợp do \texttt{data\_gen.py} sinh ra và tập gồm 1\,000 gói npm thật (500 gói độc hại, 500 gói phổ biến). Trên tập tổng hợp, detector đạt Precision, Recall và F1 đều bằng 100\%. Trên dữ liệu thật, các chỉ số giảm còn Precision 78{,}9\%, Recall 66{,}6\%, F1 72{,}2\% và FPR 17{,}8\%. Phân tích theo từng lớp cho thấy Layer~1 (siêu dữ liệu) một mình cho F1 cao hơn toàn hệ thống, Layer~2 gây phần lớn báo động nhầm và Layer~3 không đóng góp phát hiện nào.
 \end{abstract}

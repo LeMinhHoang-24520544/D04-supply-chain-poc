@@ -3,7 +3,7 @@
 Đồ án môn học: **Cơ chế hoạt động của mã độc (NT230)**  
 Trường Đại học Công nghệ Thông tin (ĐHQG-HCM)  
 Giảng viên hướng dẫn: **TS. Phan Thế Duy**  
-Nhóm thực hiện: **Nhóm 02** — **24520544 - Lê Minh Hoàng**, **24520557 - Nguyễn Minh Hoàng**  
+Nhóm thực hiện: **Nhóm 02** — **24520544 - Lê Minh Hoàng**, **24520557 - Nguyễn Minh Hoàng**
 
 ---
 
@@ -14,15 +14,20 @@ Dự án xây dựng bộ công cụ mô phỏng và phát hiện tấn công ch
 Các thành phần chính:
 - **`packages/` (Bộ 6 mẫu Package đối chứng: 3 Benign + 3 Malicious PoCs):**
   - **3 Gói Benign sạch đối chứng:** `uit-benign` (gói cơ bản), `uit-benign-native` (gói dùng hook `node-gyp` trong Whitelist), và `uit-benign-minified` (gói chứa bundle nén Webpack + icon SVG Base64).
-  - **3 Gói PoC độc hại an toàn:** `uit-marker-lifecycle` (chèn hook `preinstall`), `uit-core-auth` (Dependency Confusion `v99.9.9` + Graph Anomaly + Base64 Eval), và `uit-marker-tamper` (can thiệp mã băm tệp nén `.tgz`).
-- **`scripts/detector.py` & `scripts/sandbox_runner.js` (Động cơ phát hiện 3 lớp):**
-  - **Layer 1 (Manifest & Dependency Graph):** Kiểm tra `package.json`, phát hiện hook cài đặt nguy hiểm (`preinstall`, `postinstall`), nhảy vọt phiên bản ($\ge 90.0$), bất thường đồ thị phụ thuộc và áp dụng Whitelist cho công cụ build hợp lệ (`node-gyp`, `tsc`, `esbuild`).
-  - **Layer 2 (Static Source Analysis):** Phân tích tĩnh mã nguồn `.js` có ngữ cảnh: giải mã kiểm chứng Base64, nhận diện mã nén/bundle hợp lệ, phát hiện hàm thực thi động (`eval`, `child_process`), mẫu làm rối (`_0x`, hex escape) và domain rò rỉ dữ liệu (OAST/Webhook/IP thô).
-  - **Layer 3 (Dynamic Behavioral Sandbox):** Chạy cô lập trong môi trường Node.js (`--experimental-permission` + API Hooking trên `Module._load`), chặn và ghi nhận hành vi kết nối mạng (`http`, `dns`, `net`), mở shell (`child_process`), truy cập file ngoài phạm vi (`fs`), bẫy Honeypot `process.env`, bóc vỏ `eval()` và chống ngủ đông (`setTimeout`, `Atomics.wait`).
-  - **Integrity Check:** Đối chiếu mã băm SHA-512 thực tế của gói `.tgz` với mã băm kỳ vọng.
-- **`scripts/supply_chain_gate.py` (CI/CD Security Gate):** Chốt chặn tiền cài đặt, tự động hủy quá trình build (`Exit Code 1`) nếu tổng điểm rủi ro vượt ngưỡng (mặc định: `35`).
-- **`infrastructure/`:** Môi trường thử nghiệm Docker cô lập gồm registry nội bộ Verdaccio (Air-gapped) và container nạn nhân.
-- **`benchmark/`:** Kịch bản và báo cáo đánh giá thực nghiệm trên 1.000 gói npm.
+  - **3 Gói PoC độc hại an toàn:** `uit-marker-lifecycle` (chèn hook `preinstall`), `uit-core-auth` (Dependency Confusion `v99.9.9` + Base64 Eval), và `uit-marker-tamper` (can thiệp mã băm tệp nén `.tgz`).
+- **`scripts/detector.py` & `scripts/sandbox_runner.js` (Động cơ phát hiện 3 lớp độc lập với PoC):**
+  - **Layer 1 (Manifest, Dependency Graph & Integrity):**
+    - *1A Manifest:* Kiểm tra `package.json` (`preinstall`/`install`/`postinstall`/`preuninstall`/`postuninstall`, author hooks `prepare`/`prepack`/`postpack`/`prepublish`), phân giải chuỗi `npm/yarn/pnpm run`, khử làm rối shell, kiểm tra `binding.gyp` `<!(...)` và script phụ trợ, bất thường phiên bản (CalVer-aware), typosquatting, binary shadowing; áp dụng Whitelist build tool (`node-gyp`, `tsc`, `esbuild`, `opencollective`, `echo` thuần) và ngoại lệ banner script ngắn an toàn.
+    - *1B Dependency Graph:* Phát hiện nguồn phụ thuộc ngoài registry tin cậy (URL/IP thô/Gist), tự phụ thuộc runtime, path traversal `file:`/`link:`, alias hijacking `npm:`, `overrides`/`resolutions` hijacking, đầu độc URL trong lockfile và `node_modules/` đóng gói sẵn chưa khai báo.
+    - *1C Integrity:* Đối chiếu SRI hash (`sha512`/`sha384`/`sha256`/`sha1`) và kiểm tra cấu trúc `.tgz` (Tar Slip, symlink/hardlink escape, Tar Clobbering / trùng `package.json`).
+  - **Layer 2 (Static Source Analysis + Cross-Layer Gating):**
+    - Phân tích tĩnh mã `.js/.cjs/.mjs` có ngữ cảnh: loại bỏ comment, giải thoát `\xXX`/`\uXXXX` & gộp nối chuỗi, tìm entrypoint qua BFS 2 bước, nhận diện bundle/minified, kiểm chứng ngữ nghĩa chuỗi Base64/Hex giải mã, luồng decode → `eval`/`vm`, luồng recon → exfil, kiểm tra cửa sổ tham số `child_process`, nhận diện làm rối nặng (JSFuck, XOR loop, `_0x`, `fromCharCode`) và entropy trượt chống báo nhầm.
+    - Hỗ trợ chế độ **có cổng liên lớp** (mặc định, giảm FP khi Layer 1 sạch) và chế độ **cộng điểm độc lập** (`--always-scan-l2`).
+  - **Layer 3 (Dynamic Behavioral Sandbox):**
+    - Chạy cô lập trong Node.js (tự động nhận diện `--permission` trên Node 22+ hoặc `--experimental-permission` trên Node 20–21) + API Hooking `Module._load`, chặn và ghi nhận hành vi mạng (`http`, `https`, `dns`, `net`, `tls`, `dgram`, `fetch`), shell (`child_process`), truy cập file ngoài phạm vi (`fs`), bẫy Honeypot `process.env`, bóc vỏ `eval`/`Function`/`vm`, chống trì hoãn (`Date`/`performance.now`/`setTimeout`/`Atomics.wait`), tách pha `load` và `export_fuzz` để tránh báo nhầm thư viện CLI hợp lệ.
+- **`scripts/supply_chain_gate.py` (CI/CD Security Gate):** Chốt chặn tiền cài đặt, tự động dừng pipeline (`Exit Code 1`) nếu tổng điểm rủi ro đạt ngưỡng (mặc định: `35`) hoặc gói lỗi.
+- **`infrastructure/`:** Môi trường Docker cô lập gồm registry nội bộ Verdaccio (Air-gapped, `uplinks: {}`), container nạn nhân `victim-consumer`, và script demo tự động `infrastructure/demo.sh`.
+- **`benchmark/`:** Bộ công cụ benchmark tĩnh trên 1.000 gói npm thật (dev/test split chống rò rỉ) và thí nghiệm biến thể né tránh có kiểm soát (`benchmark/evasion/`).
 
 ---
 
@@ -31,9 +36,10 @@ Các thành phần chính:
 ```text
 .
 ├── infrastructure/                       # Hạ tầng Docker cô lập (Verdaccio Air-gap + Victim)
-│   ├── docker-compose.yml
-│   ├── verdaccio/config.yaml
-│   └── victim-consumer/
+│   ├── docker-compose.yml                # Ghim phiên bản verdaccio/verdaccio:5
+│   ├── demo.sh                           # Script demo end-to-end tự động (lưu logs/docker_demo.log)
+│   ├── verdaccio/config.yaml             # uplinks: {} (Air-gap hoàn toàn)
+│   └── victim-consumer/                  # Container nạn nhân (node:20-alpine, >=1.0.0)
 ├── packages/                             # Bộ 6 gói đối chứng (3 Benign + 3 Malicious PoCs)
 │   ├── uit-benign/                       # [Benign 1] Gói đối chứng sạch cơ bản
 │   ├── uit-benign-native/                # [Benign 2] Gói native addon dùng hook trong Whitelist
@@ -48,55 +54,88 @@ Các thành phần chính:
 │   ├── data_gen.py                       # Bộ sinh dữ liệu thử nghiệm tổng hợp
 │   ├── evaluate.py                       # Công cụ đo đạc hiệu năng và xuất telemetry
 │   └── run_pipeline.py                   # Script tự động kiểm tra toàn bộ pipeline
-├── benchmark/                            # Đánh giá thực nghiệm trên dữ liệu thật
+├── benchmark/                            # Đánh giá thực nghiệm (dữ liệu thật + evasion)
+│   ├── bench_real.py                     # Benchmark tĩnh (L1+L2, khóa Layer 3) trên 1.000 gói thật
+│   ├── evasion/                          # Thí nghiệm 16 biến thể né tránh + 7 đối chứng sạch
+│   └── README.md                         # Hướng dẫn tái lập bộ dữ liệu thật
 └── README.md
 ```
 
 ---
 
-## 3. Hướng dẫn chạy nhanh
+## 3. Yêu cầu môi trường
 
-Yêu cầu: **Python >= 3.10**, **Node.js >= 18.x** (và **Docker** nếu chạy cụm registry nội bộ).
+- **Python >= 3.10**
+- **Node.js >= 20.x** (khuyến nghị **22.x** để hỗ trợ cờ `--permission`; Node 20–21 dùng `--experimental-permission`)
+- **Docker & Docker Compose v2** (nếu chạy demo cụm registry nội bộ)
+- **Máy ảo (VMware Workstation / VirtualBox) có Snapshot/Rollback** khi làm việc với bộ mẫu độc thật.
 
-### 1. Chạy kiểm tra tự động toàn bộ Pipeline
+---
+
+## 4. Hướng dẫn chạy nhanh & tái lập
+
+### 4.1. Kiểm tra tự động toàn bộ Pipeline (mẫu an toàn, đủ 3 lớp)
 ```bash
 python scripts/run_pipeline.py
 ```
 
-### 2. Quét gói bằng Detector 3 lớp
+### 4.2. Quét 6 gói đối chứng & kiểm tra cổng CI/CD
 ```bash
-# Sinh tệp kiểm thử toàn vẹn và quét toàn bộ 6 gói trong packages/
+# Sinh tệp kiểm thử toàn vẹn SHA-512 và quét 6 gói trong packages/
 python packages/uit-marker-tamper/simulate_tamper.py
 python scripts/detector.py packages
-```
 
-### 3. Kiểm tra chốt chặn CI/CD Security Gate
-```bash
-# Gói sạch -> GATE PASSED (Exit code 0)
+# Cổng CI/CD: gói sạch -> GATE PASSED (exit code 0)
 python scripts/supply_chain_gate.py packages/uit-benign
 python scripts/supply_chain_gate.py packages/uit-benign-native
 python scripts/supply_chain_gate.py packages/uit-benign-minified
 
-# Gói độc hại -> GATE FAILED (Exit code 1)
+# Cổng CI/CD: gói độc -> GATE FAILED / BLOCKED (exit code 1)
 python scripts/supply_chain_gate.py packages/uit-core-auth
+python scripts/supply_chain_gate.py packages/uit-marker-lifecycle
 python scripts/supply_chain_gate.py packages/uit-marker-tamper
 ```
 
-### 4. Sinh dữ liệu tổng hợp và đánh giá
+### 4.3. Demo end-to-end trong Docker cô lập (Verdaccio Air-gap + Victim Container)
 ```bash
-python scripts/data_gen.py --count 100 --output ./generated_packages
+# Chạy toàn bộ kịch bản: dựng Verdaccio -> publish uit-core-auth@1.0.0 & 99.9.9,
+# uit-marker-lifecycle -> chạy cổng CI/CD -> cài trong victim-consumer -> kiểm tra /tmp/uit_marker_*.log
+bash infrastructure/demo.sh --reset
+```
+Toàn bộ log phiên demo được tự động lưu tại `logs/docker_demo.log`. Để dừng cụm container sau khi demo:
+```bash
+docker compose -f infrastructure/docker-compose.yml down
+```
+
+### 4.4. Thí nghiệm biến thể né tránh có kiểm soát (460 gói an toàn, so sánh L1+L2 vs L1+L2+L3)
+```bash
+python benchmark/evasion/gen_evasion.py --out ./generated_evasion --seed 42
+python benchmark/evasion/run_evasion.py --dataset ./generated_evasion --label after
+```
+
+### 4.5. Dữ liệu tổng hợp (1.000 gói) và đánh giá định lượng
+```bash
+python scripts/data_gen.py --count 1000 --output ./generated_packages
 python scripts/evaluate.py --dataset ./generated_packages
 ```
 
-### 5. Khởi chạy hạ tầng Docker cô lập
+### 4.6. Benchmark trên dữ liệu thật (1.000 gói npm — CHỈ chạy tĩnh trong VM cô lập)
+Xem chi tiết tải dataset và tái lập trong [`benchmark/README.md`](benchmark/README.md):
 ```bash
-docker compose -f infrastructure/docker-compose.yml up -d
+python3 benchmark/bench_real.py --part dev                    # đo & chỉnh luật trên nửa dev
+python3 benchmark/bench_real.py --part dev --always-scan-l2   # so sánh chế độ không cổng
+python3 benchmark/bench_real.py --part all --final            # chạy DUY NHẤT 1 lần để lấy kết quả test
 ```
 
 ---
 
-## 4. Nguyên tắc an toàn
+## 5. Cấu hình máy ảo & Checklist an toàn (Hạng mục D)
 
-- **Cô lập hoàn toàn:** Mọi thử nghiệm thực hiện trong máy ảo và mạng Docker nội bộ; Verdaccio đã tắt hoàn toàn kết nối ra `npmjs.org` (`uplinks: {}`).
-- **Payload vô hại:** Các gói PoC chỉ ghi chuỗi đánh dấu vào `/tmp/uit_marker_*.log` (hoặc `C:\Users\Public\uit_marker_*.log`) và `console.log`.
-- **Sandbox khóa quyền:** Layer 3 tước quyền ghi đĩa và tạo tiến trình ở tầng C++ (`--experimental-permission`) kết hợp chặn toàn bộ mạng/shell/file ở tầng JS và giới hạn `timeout=2.0s`.
+- **Cô lập hai lớp:** Mọi thử nghiệm dữ liệu thật thực hiện trong máy ảo **Oracle VirtualBox** (`SupplyChain-Sandbox`, Ubuntu 26.04.1 LTS, 4 vCPU, 13 GiB RAM) có chụp **Snapshot** trước khi chạy và **Rollback** sau khi hoàn tất; hạ tầng demo chạy trong mạng Docker bridge nội bộ, Verdaccio đã tắt hoàn toàn uplink ra Internet (`uplinks: {}`).
+- **Payload PoC vô hại 100%:** Các gói PoC trong `packages/` và `benchmark/evasion/` chỉ ghi chuỗi đánh dấu vào `/tmp/uit_marker_*.log` (hoặc `C:/Users/Public/uit_marker_*.log` trên Windows) và `console.log` — không C2 Internet, không đánh cắp thông tin xác thực, không rò rỉ dữ liệu, không persistence ngoài phạm vi.
+- **Tách biệt tĩnh/động với mẫu thật:** Bộ 500 gói độc DataDog **không** được commit vào repository; khi quét trong VM phải:
+  - [x] Chụp Snapshot sạch (`supplay chain`) trước khi quét mẫu thật.
+  - [x] Ngắt hoàn toàn kết nối Internet của VM (tắt NAT, chỉ giữ Host-Only nội bộ để thao tác qua SSH; xác nhận `ping -c 2 8.8.8.8` báo `Network is unreachable`).
+  - [x] Không gắn thư mục chia sẻ giữa VM và máy thật (xác nhận `mount | grep -iE 'vboxsf|hgfs'` rỗng).
+  - [x] Tuyệt đối **không** chạy `npm install`, `node`, hay Layer 3 trên mẫu độc thật (`bench_real.py` khóa cứng Layer 3 và mọi lệnh tạo tiến trình con).
+  - [ ] Khôi phục Snapshot sau khi đã sao lưu kết quả log định lượng.
