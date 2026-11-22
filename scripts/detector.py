@@ -207,7 +207,8 @@ MALICIOUS_EXFIL_ENDPOINT_REGEX = re.compile(
 
 # Dangerous shell commands when passed into child_process calls (Layer 2 - evaluated only inside call windows)
 DANGEROUS_SHELL_ARG_REGEX = re.compile(
-    r"(?:\b(?:curl|wget|nc|netcat|ncat|bash\s+-c|sh\s+-c|cmd(?:\.exe)?\s+/c|powershell|pwsh|"
+    r"(?:(?:^|[;&|'\"`\s])nc\s+(?:-[A-Za-z0-9]+\s+)*(?:[A-Za-z0-9.-]+\s+\d{1,5}\b|-[lec]\b)|"
+    r"\b(?:curl|wget|netcat|ncat|bash\s+-c|sh\s+-c|cmd(?:\.exe)?\s+/c|powershell|pwsh|"
     r"whoami|uname|nslookup|dig|ping\s+-[nc]|base64\s+-d|chmod\s+\+x|/dev/tcp/|"
     r"/etc/passwd|/etc/shadow|\.npmrc|\.ssh)\b|"
     r"(?:&&|\|\||;|\|)\s*id(?:\s+-[A-Za-z]+)*\s*(?:['\"`]|&&|\|\||;|\||\n|$))",
@@ -231,8 +232,7 @@ DECODED_PAYLOAD_INDICATORS = re.compile(
     r"\bprocess\.env\b|\buserInfo\b|\bBuffer\.from\s*\(|"
     r"/bin/sh\b|/bin/bash\b|cmd\.exe\b|powershell\b|\bcurl\s+|\bwget\s+|"
     r"/etc/passwd\b|/etc/shadow\b|/etc/sudoers\b|/proc/self/environ\b|"
-    r"\.npmrc\b|\.ssh\b|/tmp/|C:\\\\?Users\\\\?Public|"
-    r"\[D04\b|\[OBFUSCATION MARKER\])",
+    r"\.npmrc\b|\.ssh\b|/tmp/|C:\\\\?Users\\\\?Public)",
     re.IGNORECASE
 )
 
@@ -573,8 +573,7 @@ class SupplyChainDetector:
             r"userInfo|networkInterfaces|hostname|process\.binding|process\._linkedBinding|process\.dlopen|mainModule|"
             r"fromCharCode|fromCodePoint|Atomics|Reflect|Proxy)\b|"
             r"import\s*\(|"
-            r"\b_0x[a-fA-F0-9]{3,}\b|"
-            r"\[(?:DEPENDENCY CONFUSION MARKER|D04|OBFUSCATION MARKER|TAMPER MARKER)",
+            r"\b_0x[a-fA-F0-9]{3,}\b",
             re.IGNORECASE,
         )
         if unsafe_tokens_re.search(content) or self._detect_heavy_obfuscation(content, content):
@@ -1003,7 +1002,7 @@ class SupplyChainDetector:
 
                 pkg_name_l = str(data.get("name", "")).strip().lower()
                 has_repo = bool(data.get("repository"))
-                has_internal_name = bool(re.search(r"(?:^|[-_/])(?:internal|corp|private|staging|uit)(?:[-_/]|$)", pkg_name_l))
+                has_internal_name = bool(re.search(r"(?:^|[-_/])(?:internal|corp|private|staging)(?:[-_/]|$)", pkg_name_l))
                 has_untrusted_dep = False
                 for dep_f in ("dependencies", "optionalDependencies"):
                     dep_obj = data.get(dep_f, {})
@@ -3507,10 +3506,18 @@ class SupplyChainDetector:
         destr_map: Dict[str, str] = {
             local: orig for orig, local in cp_destr if orig in self._CP_FUNC_NAMES
         }
-        cp_call_patterns = [r"\b(?:" + "|".join(self._CP_FUNC_NAMES) + r")\s*\("]
+        cp_names = "|".join(self._CP_FUNC_NAMES)
+        # Bare calls must not be member calls (avoids regex.exec(), worker.fork(), ...);
+        # member calls count only on a child_process alias or a direct require().
+        cp_call_patterns = [r"(?<![.\w$])(?:" + cp_names + r")\s*\("]
+        cp_call_patterns.append(
+            r"require\s*\(\s*['\"`](?:node:)?child_process['\"`]\s*\)\s*\.\s*(?:" + cp_names + r")\s*\("
+        )
+        for alias in cp_aliases:
+            cp_call_patterns.append(rf"\b{re.escape(alias)}\s*\.\s*(?:{cp_names})\s*\(")
         for orig, local in cp_destr:
             if orig in self._CP_FUNC_NAMES and local not in self._CP_FUNC_NAMES:
-                cp_call_patterns.append(rf"\b{re.escape(local)}\s*\(")
+                cp_call_patterns.append(rf"(?<![.\w$]){re.escape(local)}\s*\(")
         cp_call_re = re.compile("|".join(cp_call_patterns))
         cp_calls = list(cp_call_re.finditer(norm_code)) if has_cp_import else []
 
@@ -3526,7 +3533,7 @@ class SupplyChainDetector:
                 in_dangerous_window = True
                 only_safe_tool_spawn = False
                 break
-            callee = m.group(0).rstrip("( \t\r\n")
+            callee = m.group(0).rstrip("( \t\r\n").split(".")[-1].strip()
             orig_fn = destr_map.get(callee, callee)
             call_args = self._extract_call_args_slice(norm_code, m.end() - 1, 320)
             if (
@@ -4332,7 +4339,15 @@ class SupplyChainDetector:
             })
 
         # 2. Child Process / OS Shell Execution (+45 CRITICAL)
-        proc_events = by_cat.get("CHILD_PROCESS_SPAWN", [])
+        # Spawns observed only while the sandbox calls exported functions are expected for
+        # legitimate CLI wrappers; count them only with a dangerous command or recon context.
+        has_recon_ctx = bool(by_cat.get("ENV_HARVESTING") or by_cat.get("ENV_ENUMERATION")
+                             or by_cat.get("FS_SENSITIVE_READ") or by_cat.get("OS_FINGERPRINTING"))
+        proc_events = [
+            e for e in by_cat.get("CHILD_PROCESS_SPAWN", [])
+            if e.get("phase") != "export_fuzz" or has_recon_ctx
+            or DANGEROUS_SHELL_ARG_REGEX.search(str(e.get("detail", "")))
+        ]
         if proc_events:
             score += 45
             sample_details = "; ".join([f"{e['api']}: {e['detail']}" for e in proc_events[:2]])
@@ -4596,6 +4611,15 @@ class SupplyChainDetector:
                 return {
                     "package_path": pkg_dir,
                     "error": f"Invalid JSON: {str(e)}",
+                    "verdict": "ERROR",
+                    "risk_score": 0,
+                    "findings": []
+                }
+
+            if not isinstance(manifest_data, dict):
+                return {
+                    "package_path": pkg_dir,
+                    "error": "package.json is not a JSON object",
                     "verdict": "ERROR",
                     "risk_score": 0,
                     "findings": []

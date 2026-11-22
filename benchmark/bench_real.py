@@ -20,7 +20,6 @@ import csv
 import json
 import math
 import os
-import shutil
 import statistics
 import sys
 import time
@@ -77,17 +76,7 @@ CONFIGS = [
     ("Chi Layer 1 (tong)", lambda r: ls(r, "layer_1_manifest")),
     ("  L1 manifest", lambda r: ls(r, "layer_1_manifest") - ls(r, "layer_1_dependency_graph") - ls(r, "layer_1_integrity")),
     ("  L1 do thi phu thuoc", lambda r: ls(r, "layer_1_dependency_graph")),
-    ("Chi Layer 2", lambda r: ls(r, "layer_2_source")),
-]
-
-CONFIGS_L3 = [
-    ("Ca 3 lop (L1+L2+L3)", lambda r: r.get("risk_score", 0)),
-    ("Ca hai lop tinh (L1+L2)", lambda r: ls(r, "layer_1_manifest") + ls(r, "layer_2_source")),
-    ("Chi Layer 1 (tong)", lambda r: ls(r, "layer_1_manifest")),
-    ("  L1 manifest", lambda r: ls(r, "layer_1_manifest") - ls(r, "layer_1_dependency_graph") - ls(r, "layer_1_integrity")),
-    ("  L1 do thi phu thuoc", lambda r: ls(r, "layer_1_dependency_graph")),
-    ("Chi Layer 2", lambda r: ls(r, "layer_2_source")),
-    ("Chi Layer 3", lambda r: ls(r, "layer_3_behavioral")),
+    ("Layer 2 (sau cong neu co)", lambda r: ls(r, "layer_2_source")),
 ]
 
 
@@ -96,8 +85,8 @@ def fmt(m):
         m["precision"] * 100, m["recall"] * 100, m["f1"] * 100, m["fpr"] * 100, m["tp"], m["fp"], m["tn"], m["fn"])
 
 
-def report(name, recs, thr, enable_l3=False):
-    cfgs = CONFIGS_L3 if enable_l3 else CONFIGS
+def report(name, recs, thr):
+    cfgs = CONFIGS
     nb = sum(1 for r in recs if r["ground_truth"] == "BENIGN")
     nm = len(recs) - nb
     print("\n" + "=" * 78)
@@ -109,7 +98,7 @@ def report(name, recs, thr, enable_l3=False):
     full = metrics(recs, cfgs[0][1], thr)
     print("  FPR 95%% can tren (Wilson): %.2f%%  (FP=%d tren %d goi sach)" % (
         wilson_upper(full["fp"], full["fp"] + full["tn"]) * 100, full["fp"], full["fp"] + full["tn"]))
-    print("\n  Quet nguong (%s):" % ("ca 3 lop" if enable_l3 else "ca hai lop tinh"))
+    print("\n  Quet nguong (ca hai lop tinh):")
     for t in (15, 25, 35, 45, 60, 80):
         print("   thr=%3d  %s" % (t, fmt(metrics(recs, cfgs[0][1], t))))
     print("\n  Ty le theo loai (nguong %d):" % thr)
@@ -161,16 +150,10 @@ def main():
                     help="do NOT drop malicious test packages that share a name with a dev package")
     ap.add_argument("--always-scan-l2", action="store_true",
                     help="additive mode: Layer 2 always counts (no cross-layer gating)")
-    ap.add_argument("--enable-l3", action="store_true",
-                    help="enable Layer 3 dynamic sandbox (ONLY in isolated offline VM)")
     ap.add_argument("--tag", default=None, help="output tag (default: static_gated or static_addl2)")
     args = ap.parse_args()
 
-    if args.enable_l3:
-        if not shutil.which("node"):
-            sys.exit("Khong tim thay 'node' tren may ao. Chay: sudo apt update && sudo apt install -y nodejs")
-    else:
-        _disable_l3()
+    _disable_l3()  # never execute real malware samples: static layers only
 
     if args.part in ("test", "all") and not args.final:
         sys.exit("Refusing to touch the TEST half without --final. Tune on dev first.")
@@ -197,13 +180,10 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     args.tag = args.tag or ("static_addl2" if args.always_scan_l2 else "static_gated")
-    if args.enable_l3:
-        args.tag += "_l3"
     det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold,
                                 always_scan_l2=args.always_scan_l2)
     print("Che do: %s" % ("CONG DIEM DOC LAP (always_scan_l2)" if args.always_scan_l2 else "CO CONG (gating)"), flush=True)
-    mode_lbl = "CO Layer 3" if args.enable_l3 else "tinh, KHONG Layer 3"
-    print("Quet %d goi (part=%s, %s) ..." % (len(pids), args.part, mode_lbl), flush=True)
+    print("Quet %d goi (part=%s, tinh, KHONG Layer 3) ..." % (len(pids), args.part), flush=True)
     recs = []
     t0 = time.perf_counter()
     for i, pid in enumerate(pids, 1):
@@ -234,10 +214,10 @@ def main():
     dev = [r for r in recs if r["split"] == "dev"]
     test = [r for r in recs if r["split"] == "test"]
     if dev:
-        report("DEV", dev, args.threshold, enable_l3=args.enable_l3)
+        report("DEV", dev, args.threshold)
         export_lists(dev, args.out_dir, args.tag + "_dev")
     if test:
-        report("TEST (bao cao cuoi)", test, args.threshold, enable_l3=args.enable_l3)
+        report("TEST (bao cao cuoi)", test, args.threshold)
 
 
 if __name__ == "__main__":

@@ -119,14 +119,16 @@ const events = [];
 const eventDedupe = new Set();
 
 function recordEvent(category, api, detail, severity = 'HIGH') {
-    const key = `${category}|${api}|${detail}`;
+    const phase = inExportFuzzing ? 'export_fuzz' : 'load';
+    const key = `${category}|${api}|${detail}|${phase}`;
     if (eventDedupe.has(key)) return;
     eventDedupe.add(key);
     events.push({
         category,
         api,
         detail: String(detail || '').slice(0, 300),
-        severity
+        severity,
+        phase
     });
 }
 
