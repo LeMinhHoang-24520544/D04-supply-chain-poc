@@ -159,9 +159,11 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="scan only the first N packages (smoke test)")
     ap.add_argument("--keep-test-dupes", action="store_true",
                     help="do NOT drop malicious test packages that share a name with a dev package")
+    ap.add_argument("--always-scan-l2", action="store_true",
+                    help="additive mode: Layer 2 always counts (no cross-layer gating)")
     ap.add_argument("--enable-l3", action="store_true",
                     help="enable Layer 3 dynamic sandbox (ONLY in isolated offline VM)")
-    ap.add_argument("--tag", default="static")
+    ap.add_argument("--tag", default=None, help="output tag (default: static_gated or static_addl2)")
     args = ap.parse_args()
 
     if args.enable_l3:
@@ -194,7 +196,12 @@ def main():
         pids = pids[:args.limit]
     os.makedirs(args.out_dir, exist_ok=True)
 
-    det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold)
+    args.tag = args.tag or ("static_addl2" if args.always_scan_l2 else "static_gated")
+    if args.enable_l3:
+        args.tag += "_l3"
+    det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold,
+                                always_scan_l2=args.always_scan_l2)
+    print("Che do: %s" % ("CONG DIEM DOC LAP (always_scan_l2)" if args.always_scan_l2 else "CO CONG (gating)"), flush=True)
     mode_lbl = "CO Layer 3" if args.enable_l3 else "tinh, KHONG Layer 3"
     print("Quet %d goi (part=%s, %s) ..." % (len(pids), args.part, mode_lbl), flush=True)
     recs = []

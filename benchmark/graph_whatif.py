@@ -104,19 +104,33 @@ def main():
         gate = m >= 40 or i > 0 or f["strong_url"]
         return m + i + extra + (l2 if gate else 0)
 
+    def add_refined(r, l2cap=None, l2mult=1.0):
+        # additive scoring (NO gating) with the refined dependency-graph rules
+        f = feats[r["pkg_id"]]
+        m, i, l2 = wl(r)
+        extra = (40 if f["strong_url"] else 0) + (20 if f["self_runtime"] else 0)
+        l2v = l2 * l2mult
+        if l2cap is not None:
+            l2v = min(l2v, l2cap)
+        return m + i + extra + l2v
+
     pol = [
-        ("V0 hien tai", lambda r: sum(parts(r))),
-        ("V5 (bo do thi, L2 co cong)", v5),
-        ("V8 = V5 + URL la(+40) + tu-phu-thuoc runtime(+20)", lambda r: v8(r, 20)),
-        ("V9 = V5 + URL la(+40)", lambda r: v8(r, 0)),
+        ("V0 hien tai (cong diem)", lambda r: sum(parts(r)), 35),
+        ("V5 co cong: bo do thi, L2 phai co hook", v5, 35),
+        ("V9 co cong: V5 + URL la(+40)", lambda r: v8(r, 0), 35),
+        ("V10 KHONG cong: do thi gon, nguong 35", lambda r: add_refined(r), 35),
+        ("V11 KHONG cong: do thi gon, nguong 45", lambda r: add_refined(r), 45),
+        ("V12 KHONG cong: do thi gon, nguong 60", lambda r: add_refined(r), 60),
+        ("V13 KHONG cong: L2 tran 30 (khong tu qua nguong)", lambda r: add_refined(r, l2cap=30), 35),
+        ("V14 KHONG cong: L2 giam mot nua", lambda r: add_refined(r, l2mult=0.5), 35),
     ]
-    print("\n== Chinh sach tren DEV, nguong 35 ==")
-    print("%-52s %5s %5s %5s %5s %4s %4s  %s" % ("chinh sach", "P", "R", "F1", "FPR", "TP", "FP", "FPR tren 95%"))
-    for name, fn in pol:
+    print("\n== Chinh sach tren DEV ==")
+    print("%-50s %3s %5s %5s %5s %5s %4s %4s  %s" % ("chinh sach", "thr", "P", "R", "F1", "FPR", "TP", "FP", "FPR tren 95%"))
+    for name, fn, thr in pol:
         tp = fp = tn = fn_ = 0
         for r in recs.values():
             mal = r["ground_truth"] == "MALICIOUS"
-            f = fn(r) >= 35
+            f = fn(r) >= thr
             tp += mal and f
             fp += (not mal) and f
             tn += (not mal) and (not f)
@@ -124,8 +138,8 @@ def main():
         p = tp / (tp + fp) if tp + fp else 0
         rc = tp / (tp + fn_) if tp + fn_ else 0
         f1 = 2 * p * rc / (p + rc) if p + rc else 0
-        print("%-52s %5.1f %5.1f %5.1f %5.1f %4d %4d  %.1f%%" % (
-            name, p * 100, rc * 100, f1 * 100, fp / (fp + tn) * 100, tp, fp, wilson_upper(fp, fp + tn) * 100))
+        print("%-50s %3d %5.1f %5.1f %5.1f %5.1f %4d %4d  %.1f%%" % (
+            name, thr, p * 100, rc * 100, f1 * 100, fp / (fp + tn) * 100, tp, fp, wilson_upper(fp, fp + tn) * 100))
 
 
 if __name__ == "__main__":
