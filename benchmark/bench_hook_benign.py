@@ -17,16 +17,19 @@ Usage:
 
 import argparse
 import csv
+import glob
 import io
 import json
 import math
 import os
+import random
 import shutil
 import statistics
 import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -37,7 +40,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 import detector as D  # noqa: E402
 
 HOOK_KEYS = ("preinstall", "install", "postinstall")
-SEARCH_KEYWORDS = [
+HOOK_SEARCH_KEYWORDS = [
     "node-gyp",
     "prebuild",
     "prebuild-install",
@@ -51,6 +54,7 @@ SEARCH_KEYWORDS = [
     "ffi",
     "binary",
     "postinstall",
+    "preinstall",
     "electron",
     "puppeteer",
     "esbuild",
@@ -68,6 +72,84 @@ SEARCH_KEYWORDS = [
     "crypto",
     "wasm",
     "cli",
+    "native",
+    "swc",
+    "playwright",
+    "chromium",
+    "ffmpeg",
+    "imagemagick",
+    "leveldb",
+    "rocksdb",
+    "lmdb",
+    "duckdb",
+    "libpq",
+    "grpc",
+    "protobuf",
+    "tree-sitter",
+    "bcrypt",
+    "argon2",
+    "kerberos",
+    "ldap",
+    "pkcs11",
+    "smartcard",
+    "hid",
+    "bluetooth",
+    "gpu",
+    "webgl",
+    "vulkan",
+    "llvm",
+    "clang",
+    "neon",
+    "napi-rs",
+]
+# Backward-compatible alias for any external callers referencing SEARCH_KEYWORDS
+SEARCH_KEYWORDS = HOOK_SEARCH_KEYWORDS
+GENERAL_SEARCH_KEYWORDS = [
+    "framework",
+    "cli",
+    "typescript",
+    "react",
+    "vue",
+    "svelte",
+    "angular",
+    "express",
+    "fastify",
+    "utility",
+    "plugin",
+    "database",
+    "testing",
+    "http",
+    "async",
+    "parser",
+    "logger",
+    "build",
+    "crypto",
+    "date",
+    "validation",
+    "schema",
+    "markdown",
+    "graphql",
+    "webpack",
+    "vite",
+    "eslint",
+    "prettier",
+    "css",
+    "tailwind",
+    "animation",
+    "chart",
+    "table",
+    "form",
+    "router",
+    "state",
+    "cache",
+    "queue",
+    "stream",
+    "file",
+    "email",
+    "auth",
+    "oauth",
+    "jwt",
+    "metrics",
 ]
 MAX_TARBALL_BYTES = 20 * 1024 * 1024
 
@@ -99,21 +181,43 @@ def http_get(url: str, tries: int = 3, timeout: int = 20):
             req = urllib.request.Request(url, headers={"User-Agent": "nt230-d04-hook-stress/1.0"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read(MAX_TARBALL_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            delay = 3.0 * (i + 1) if e.code == 429 else 1.5 * (i + 1)
+            time.sleep(delay)
         except Exception:
             time.sleep(1.5 * (i + 1))
     return None
 
 
-def gather_candidates(max_candidates: int = 1200):
+def gather_candidates(
+    max_candidates: int = 1200,
+    keywords=None,
+    excluded=None,
+    rng=None,
+    pages=(0, 250, 500),
+):
+    """Collect unique package (name, version) pairs across keyword search pages."""
+    kw_list = list(keywords) if keywords is not None else list(HOOK_SEARCH_KEYWORDS)
+    excluded_set = excluded or set()
+
+    early_queries = [(kw, frm) for frm in pages if frm < 500 for kw in kw_list]
+    late_queries = [(kw, frm) for frm in pages if frm >= 500 for kw in kw_list]
+    if rng is not None:
+        rng.shuffle(early_queries)
+        rng.shuffle(late_queries)
+    queries = early_queries + late_queries
+
     cands = {}
-    for kw in SEARCH_KEYWORDS:
+    for idx, (kw, frm) in enumerate(queries, 1):
         q = urllib.parse.urlencode({
             "text": kw,
             "popularity": "1.0",
             "quality": "0.2",
             "maintenance": "0.0",
-            "size": 100,
-            "from": 0,
+            "size": 250,
+            "from": frm,
         })
         raw = http_get("https://registry.npmjs.org/-/v1/search?" + q)
         if raw:
@@ -122,17 +226,24 @@ def gather_candidates(max_candidates: int = 1200):
                     pkg = obj.get("package", {})
                     name = pkg.get("name")
                     ver = pkg.get("version")
-                    if name and ver and name not in cands:
+                    if name and ver and name not in excluded_set and name not in cands:
                         cands[name] = ver
             except Exception:
                 pass
+        if idx % 15 == 0:
+            print(f"    Search queries: {idx}/{len(queries)} -> {len(cands)} unseen candidates", flush=True)
         if len(cands) >= max_candidates:
             break
-    return list(cands.items())
+        time.sleep(0.2)
+
+    items = list(cands.items())
+    if rng is not None:
+        rng.shuffle(items)
+    return items
 
 
-def check_has_hook_via_metadata(item):
-    """Lightweight metadata check via npm registry packument for latest version."""
+def check_has_hook_via_metadata(item, require_hook: bool = True):
+    """Lightweight metadata check via npm registry packument for a specific version."""
     name, ver = item
     encoded = name.replace("/", "%2f")
     # Fetch specific version metadata (much smaller than full packument)
@@ -142,10 +253,12 @@ def check_has_hook_via_metadata(item):
     try:
         meta = json.loads(raw)
         scripts = meta.get("scripts")
-        if not isinstance(scripts, dict):
-            return None
-        active = {h: str(scripts[h]).strip() for h in HOOK_KEYS if h in scripts and str(scripts[h]).strip()}
-        if not active:
+        active = (
+            {h: str(scripts[h]).strip() for h in HOOK_KEYS if h in scripts and str(scripts[h]).strip()}
+            if isinstance(scripts, dict)
+            else {}
+        )
+        if require_hook and not active:
             return None
         tarball_url = (meta.get("dist") or {}).get("tarball")
         if not tarball_url:
@@ -155,12 +268,67 @@ def check_has_hook_via_metadata(item):
         return None
 
 
-def download_and_extract(entry, work_dir):
+def _load_excluded_names(exclude_spec: str) -> set[str]:
+    """Load previously seen package names from comma-separated CSV/JSON paths or globs."""
+    excluded = set()
+    if not exclude_spec:
+        return excluded
+    for raw_tok in exclude_spec.split(","):
+        tok = raw_tok.strip()
+        if not tok:
+            continue
+        expanded = os.path.expanduser(tok)
+        matched = sorted(glob.glob(expanded))
+        paths = matched if matched else [expanded]
+        for path in paths:
+            if not os.path.isfile(path):
+                continue
+            if path.lower().endswith(".csv"):
+                try:
+                    with open(path, encoding="utf-8", errors="replace", newline="") as cf:
+                        for row in csv.DictReader(cf):
+                            name = (row.get("name") or "").strip()
+                            if name:
+                                excluded.add(name)
+                except OSError:
+                    pass
+            else:
+                try:
+                    with open(path, encoding="utf-8") as jf:
+                        prev = json.load(jf)
+                    for r in prev.get("records", []):
+                        if isinstance(r, dict) and r.get("name"):
+                            excluded.add(str(r["name"]))
+                except (OSError, ValueError):
+                    pass
+    return excluded
+
+
+def download_and_extract(entry, work_dir, cache_dir=None):
     name, ver, tarball_url, active_hooks = entry
-    data = http_get(tarball_url, tries=2, timeout=25)
+    safe_dir = name.replace("@", "").replace("/", "__") + "__" + ver.replace("/", "_")
+    data = None
+    tgz_cache_path = os.path.join(cache_dir, safe_dir + ".tgz") if cache_dir else None
+    meta_cache_path = os.path.join(cache_dir, safe_dir + ".meta.json") if cache_dir else None
+    if tgz_cache_path and os.path.isfile(tgz_cache_path):
+        try:
+            with open(tgz_cache_path, "rb") as cf:
+                data = cf.read(MAX_TARBALL_BYTES + 1)
+        except OSError:
+            data = None
+    if data is None and tarball_url:
+        data = http_get(tarball_url, tries=2, timeout=25)
+        if data and len(data) <= MAX_TARBALL_BYTES and tgz_cache_path and meta_cache_path:
+            os.makedirs(cache_dir, exist_ok=True)
+            try:
+                with open(tgz_cache_path, "wb") as tf_out:
+                    tf_out.write(data)
+                with open(meta_cache_path, "w", encoding="utf-8") as mf_out:
+                    json.dump({"name": name, "version": ver, "tarball": tarball_url, "hooks": active_hooks}, mf_out)
+            except OSError:
+                pass
     if not data or len(data) > MAX_TARBALL_BYTES:
         return None
-    safe_dir = name.replace("@", "").replace("/", "__") + "__" + ver.replace("/", "_")
     out_dir = os.path.join(work_dir, safe_dir)
     os.makedirs(out_dir, exist_ok=True)
     try:
@@ -185,52 +353,109 @@ def download_and_extract(entry, work_dir):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Static-only FPR stress test on hook-bearing popular npm packages")
-    ap.add_argument("--target", type=int, default=120, help="Number of hook-bearing benign packages to collect")
+    ap = argparse.ArgumentParser(description="Static-only FPR benchmark on popular/random benign npm packages")
+    ap.add_argument("--target", type=int, default=120, help="Number of benign packages to collect")
     ap.add_argument("--threshold", type=int, default=35)
     ap.add_argument("--out-dir", default=os.path.join(HERE, "..", "logs"))
     ap.add_argument("--tag", default="hook_benign_stress", help="Output filename prefix")
-    ap.add_argument("--exclude-from", default=None, help="Path to previous JSON whose package names must be excluded (for unseen Test 3)")
+    ap.add_argument("--exclude-from", default=None, help="Comma-separated JSON/CSV paths or globs of previously seen packages to exclude")
+    ap.add_argument("--cache-dir", default=None, help="Optional directory to cache downloaded tarballs for offline deterministic replay")
+    ap.add_argument("--packages-file", default=None, help="Optional JSON file with records[{name,version,hooks}] to replay exact versions")
+    ap.add_argument("--random", action="store_true", help="Shuffle search queries and candidate pool with a random seed")
+    ap.add_argument("--seed", type=int, default=None, help="Explicit integer RNG seed (implies randomized sampling)")
+    ap.add_argument("--any-benign", action="store_true", help="Sample general benign npm packages without requiring an active install hook")
     args = ap.parse_args()
 
     _disable_l3()
 
-    excluded = set()
+    used_seed = args.seed
+    if args.random and used_seed is None:
+        used_seed = random.SystemRandom().randint(1, 2_147_483_647)
+    rng = random.Random(used_seed) if used_seed is not None else None
+    if rng is not None:
+        print(f"[*] Randomized sampling enabled (seed={used_seed})", flush=True)
+
+    excluded = _load_excluded_names(args.exclude_from)
     if args.exclude_from:
-        for path in [p.strip() for p in args.exclude_from.split(",") if p.strip()]:
-            if os.path.isfile(path):
-                prev = json.load(open(path, encoding="utf-8"))
-                excluded.update(r["name"] for r in prev.get("records", []) if "name" in r)
         print(f"[*] Excluding {len(excluded)} previously seen packages", flush=True)
 
-    print(f"[*] Gathering popular npm candidates across {len(SEARCH_KEYWORDS)} native/CLI keywords...", flush=True)
-    cands = [(n, v) for n, v in gather_candidates(max_candidates=max(2600, args.target * 26)) if n not in excluded]
-    print(f"[+] Candidate pool (after exclusions): {len(cands)} unique packages. Filtering for active install hooks...", flush=True)
-
     hook_entries = []
-    with ThreadPoolExecutor(max_workers=12) as ex:
-        for res in ex.map(check_has_hook_via_metadata, cands):
-            if res is not None:
-                hook_entries.append(res)
-                if len(hook_entries) >= int(args.target * 1.25):
+    if args.packages_file:
+        with open(args.packages_file, encoding="utf-8") as pf:
+            replay_data = json.load(pf)
+        replay_recs = replay_data.get("records", [])
+        target_count = len(replay_recs)
+        replay_cands = []
+        for rec in replay_recs:
+            name, ver = rec["name"], rec["version"]
+            safe_dir = name.replace("@", "").replace("/", "__") + "__" + ver.replace("/", "_")
+            tgz_p = os.path.join(args.cache_dir, safe_dir + ".tgz") if args.cache_dir else None
+            if tgz_p and os.path.isfile(tgz_p):
+                hook_entries.append((name, ver, "", rec.get("hooks", {})))
+            else:
+                replay_cands.append((name, ver))
+        if replay_cands:
+            replay_require_hook = not (args.any_benign or replay_data.get("mode") == "any_benign")
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                for res in ex.map(lambda it: check_has_hook_via_metadata(it, require_hook=replay_require_hook), replay_cands):
+                    if res is not None:
+                        hook_entries.append(res)
+        print(f"[+] Loaded {len(hook_entries)} replay entries from {args.packages_file}", flush=True)
+    else:
+        target_count = args.target
+        keywords = GENERAL_SEARCH_KEYWORDS if args.any_benign else HOOK_SEARCH_KEYWORDS
+        max_candidates = max(1000, args.target * 4) if args.any_benign else max(5000, args.target * 35)
+        mode_desc = "broad npm ecosystem" if args.any_benign else "native/CLI"
+        print(f"[*] Gathering {mode_desc} npm candidates across {len(keywords)} keywords...", flush=True)
+        cands = gather_candidates(
+            max_candidates=max_candidates,
+            keywords=keywords,
+            excluded=excluded,
+            rng=rng,
+        )
+        filter_desc = "Fetching metadata/tarball URLs..." if args.any_benign else "Filtering for active install hooks..."
+        print(f"[+] Candidate pool (after exclusions): {len(cands)} unique packages. {filter_desc}", flush=True)
+
+        needed_hits = int(args.target * 1.25) + 10
+        require_hook = not args.any_benign
+        batch_size = 80
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            for b_idx, start in enumerate(range(0, len(cands), batch_size), 1):
+                batch = cands[start:start + batch_size]
+                for res in ex.map(lambda item: check_has_hook_via_metadata(item, require_hook=require_hook), batch):
+                    if res is not None:
+                        hook_entries.append(res)
+                        if len(hook_entries) >= needed_hits:
+                            break
+                checked = min(start + batch_size, len(cands))
+                if b_idx % 3 == 0 or len(hook_entries) >= needed_hits or checked >= len(cands):
+                    print(f"    Metadata checked {checked}/{len(cands)} -> {len(hook_entries)} matches", flush=True)
+                if len(hook_entries) >= needed_hits:
                     break
 
-    print(f"[+] Found {len(hook_entries)} packages with active preinstall/install/postinstall hooks.", flush=True)
+        noun = "installable benign packages" if args.any_benign else "packages with active preinstall/install/postinstall hooks"
+        print(f"[+] Found {len(hook_entries)} {noun}.", flush=True)
 
     work_dir = tempfile.mkdtemp(prefix="d04_hook_benign_")
     os.makedirs(args.out_dir, exist_ok=True)
 
     try:
         extracted = []
+        dl_batch_size = 32
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for res in ex.map(lambda e: download_and_extract(e, work_dir), hook_entries):
-                if res is not None:
-                    extracted.append(res)
-                    if len(extracted) >= args.target:
-                        break
+            for start in range(0, len(hook_entries), dl_batch_size):
+                batch = hook_entries[start:start + dl_batch_size]
+                for res in ex.map(lambda e: download_and_extract(e, work_dir, cache_dir=args.cache_dir), batch):
+                    if res is not None:
+                        extracted.append(res)
+                        if len(extracted) >= target_count:
+                            break
+                if len(extracted) >= target_count:
+                    break
 
-        print(f"[+] Successfully downloaded & extracted {len(extracted)} hook-bearing benign packages.", flush=True)
-        print("[*] Scanning with frozen SupplyChainDetector (static-only, gated mode, thr=35)...", flush=True)
+        label_noun = "benign packages" if args.any_benign else "hook-bearing benign packages"
+        print(f"[+] Successfully downloaded & extracted {len(extracted)} {label_noun}.", flush=True)
+        print(f"[*] Scanning with frozen SupplyChainDetector (static-only, gated mode, thr={args.threshold})...", flush=True)
 
         det = D.SupplyChainDetector(enable_whitelist=True, risk_threshold=args.threshold, always_scan_l2=False)
         recs = []
@@ -272,8 +497,17 @@ def main():
                 print(f"    {idx}/{len(extracted)} ({time.perf_counter() - t0:.1f}s)", flush=True)
 
         n = len(recs)
+        if n == 0:
+            print("[!] No benign packages collected (0 downloaded/scanned). Check VM NAT/network connectivity and retry.", flush=True)
+            sys.exit(1)
+
         print("\n" + "=" * 78)
-        print(f" HOOK-BEARING BENIGN STRESS TEST (Test 2): {n} packages (100% have install hook)")
+        with_hook = sum(1 for r in recs if r["hooks"])
+        if args.any_benign:
+            print(f" RANDOM BENIGN NPM BENCHMARK: {n} packages ({with_hook}/{n} = {with_hook/n*100:.1f}% have install hook, seed={used_seed})")
+        else:
+            seed_suffix = f", seed={used_seed}" if used_seed is not None else ""
+            print(f" HOOK-BEARING BENIGN STRESS TEST (Test 2): {n} packages (100% have install hook{seed_suffix})")
         print("=" * 78)
 
         wl_cnt = sum(1 for r in recs if r["whitelisted"])
@@ -315,7 +549,17 @@ def main():
 
         json_out = os.path.join(args.out_dir, f"{args.tag}.json")
         with open(json_out, "w", encoding="utf-8") as jf:
-            json.dump({"n": n, "threshold": args.threshold, "records": recs}, jf, indent=2)
+            json.dump(
+                {
+                    "n": n,
+                    "mode": "any_benign" if args.any_benign else "hook_only",
+                    "seed": used_seed,
+                    "threshold": args.threshold,
+                    "records": recs,
+                },
+                jf,
+                indent=2,
+            )
 
         csv_out = os.path.join(args.out_dir, f"{args.tag}_fp.csv")
         with open(csv_out, "w", newline="", encoding="utf-8") as cf:

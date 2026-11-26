@@ -59,6 +59,7 @@ let virtualTimeOffset = 0;
 let isSandboxInternalCompile = false;
 const TELEMETRY_PREFIX = '__D04_TELEMETRY__';
 let inExportFuzzing = false;
+let currentPhase = 'install';
 
 function maskAsNative(fn, name) {
     try {
@@ -83,6 +84,9 @@ try {
 } catch (e) {
     realPkgDir = pkgDir;
 }
+try {
+    process.chdir(pkgDir);
+} catch (e) {}
 
 const configRaw = process.argv[3] || '{}';
 let sandboxConfig = {};
@@ -119,7 +123,7 @@ const events = [];
 const eventDedupe = new Set();
 
 function recordEvent(category, api, detail, severity = 'HIGH') {
-    const phase = inExportFuzzing ? 'export_fuzz' : 'load';
+    const phase = inExportFuzzing ? 'export_fuzz' : currentPhase;
     const key = `${category}|${api}|${detail}|${phase}`;
     if (eventDedupe.has(key)) return;
     eventDedupe.add(key);
@@ -130,6 +134,43 @@ function recordEvent(category, api, detail, severity = 'HIGH') {
         severity,
         phase
     });
+}
+
+function buildBehavioralSummary(evList) {
+    const phases = { install: 0, import: 0, export_fuzz: 0 };
+    const axes = {
+        commands: [],
+        files: { read: [], write: [], sensitive: [] },
+        network: [],
+        env: []
+    };
+    const pushUniq = (arr, item) => {
+        if (arr.length < 50 && !arr.includes(item)) arr.push(item);
+    };
+    for (const ev of evList || []) {
+        const ph = ev.phase === 'install' || ev.phase === 'import' || ev.phase === 'export_fuzz'
+            ? ev.phase
+            : 'import';
+        phases[ph] = (phases[ph] || 0) + 1;
+        const entry = `${ev.api}: ${ev.detail}`;
+        if (ev.category === 'CHILD_PROCESS_SPAWN') {
+            pushUniq(axes.commands, entry);
+        } else if (ev.category === 'FS_SENSITIVE_READ') {
+            pushUniq(axes.files.sensitive, entry);
+            pushUniq(axes.files.read, entry);
+        } else if (ev.category === 'FS_EXTERNAL_WRITE' || ev.category === 'FS_INTERNAL_WRITE') {
+            pushUniq(axes.files.write, entry);
+        } else if (
+            ev.category === 'NETWORK_EGRESS' ||
+            ev.category === 'DNS_EXFILTRATION' ||
+            ev.category === 'RAW_SOCKET_CONNECT'
+        ) {
+            pushUniq(axes.network, entry);
+        } else if (ev.category === 'ENV_HARVESTING' || ev.category === 'ENV_ENUMERATION') {
+            pushUniq(axes.env, entry);
+        }
+    }
+    return { phases, axes };
 }
 
 // ============================================================================
@@ -2276,19 +2317,50 @@ function executeNodeFromHook(cmdStr, depth = 0) {
     }
 }
 
+function invokeExportedCallable(fn) {
+    if (typeof fn !== 'function') return;
+    let desc = null;
+    try {
+        desc = Object.getOwnPropertyDescriptor(fn, 'prototype');
+    } catch (e) {}
+    // OSSF package-analysis ES6 class heuristic: constructor if prototype.writable === false
+    if (fn.prototype && desc && desc.writable === false) {
+        let inst = null;
+        executeTargetCode(() => {
+            inst = new fn({}, '', noop);
+        });
+        if (inst) {
+            let calledMethods = 0;
+            try {
+                for (const mName of Object.getOwnPropertyNames(fn.prototype)) {
+                    if (mName === 'constructor' || calledMethods >= 3) continue;
+                    if (typeof inst[mName] === 'function') {
+                        calledMethods++;
+                        executeTargetCode(() => { inst[mName]({}, '', noop); });
+                    }
+                }
+            } catch (e) {}
+        }
+        return;
+    }
+    executeTargetCode(() => { fn({}, '', noop); });
+}
+
 // Step A: Analyze and execute lifecycle hooks from package.json
+currentPhase = 'install';
 const hooks = sandboxConfig.hooks || {};
 for (const [hookName, cmdStr] of Object.entries(hooks)) {
     emulateLifecycleScript(hookName, cmdStr);
     executeNodeFromHook(cmdStr);
 }
 
-// Step B: Execute target JS entrypoints inside the package & fuzz up to 5 exported functions
+// Step B: Execute target JS entrypoints inside the package & fuzz up to 5 exported functions/classes
 const targetFiles = Array.isArray(sandboxConfig.files) ? sandboxConfig.files : [];
 for (const relOrAbsFile of targetFiles) {
     const fullPath = path.resolve(pkgDir, relOrAbsFile);
     if (!realFsExistsSync(fullPath)) continue;
 
+    currentPhase = 'import';
     let exported;
     executeTargetCode(() => {
         exported = loadTargetModule(fullPath);
@@ -2297,7 +2369,7 @@ for (const relOrAbsFile of targetFiles) {
     inExportFuzzing = true;
     try {
         if (typeof exported === 'function') {
-            executeTargetCode(() => { exported({}, '', noop); });
+            invokeExportedCallable(exported);
         }
         if (exported && (typeof exported === 'object' || typeof exported === 'function')) {
             let fuzzed = 0;
@@ -2306,13 +2378,14 @@ for (const relOrAbsFile of targetFiles) {
                 try {
                     if (typeof exported[key] === 'function') {
                         fuzzed++;
-                        executeTargetCode(() => { exported[key]({}, '', noop); });
+                        invokeExportedCallable(exported[key]);
                     }
                 } catch (e) {}
             }
         }
     } finally {
         inExportFuzzing = false;
+        currentPhase = 'import';
     }
 }
 
@@ -2321,7 +2394,8 @@ function finalizeTelemetry() {
     realStdoutWrite(TELEMETRY_PREFIX + JSON.stringify({
         package_dir: pkgDir,
         events_count: events.length,
-        events: events
+        events: events,
+        behavioral_summary: buildBehavioralSummary(events)
     }) + '\n');
     realExit(0);
 }

@@ -25,6 +25,7 @@ generated_packages/
 logs/
 *.log
 documents/
+slides/
 
 # System & IDE Specific Files
 .DS_Store
