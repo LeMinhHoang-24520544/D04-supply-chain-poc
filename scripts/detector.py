@@ -84,6 +84,7 @@ from detector_core.layer3_sandbox import (  # noqa: E402
     collect_sandbox_targets as _l3_collect_sandbox_targets,
     run_node_sandbox as _l3_run_node_sandbox,
     should_spawn_sandbox as _l3_should_spawn_sandbox,
+    summarize_sandbox_events as _l3_summarize_sandbox_events,
 )
 from detector_core.models import Layer1ManifestResult  # noqa: E402
 from detector_core.shell_analyzer import (  # noqa: E402
@@ -98,6 +99,7 @@ from detector_core.shell_analyzer import (  # noqa: E402
     resolve_script_chain,
     tokenize_shell_tokens,
 )
+from detector_core.version_diff import analyze_version_diff  # noqa: E402
 
 _HIGH_CONFIDENCE_STANDALONE_L2_RULES = {
     "inline_encoded_eval",
@@ -108,6 +110,10 @@ _HIGH_CONFIDENCE_STANDALONE_L2_RULES = {
     "child_process_high",
     "verified_b64_artifact",
     "nm_bundled_script_exec",
+    "obfuscated_builtin_require",
+    "toplevel_unsafe_cp_exec",
+    "delayed_exec_timer",
+    "trojan_source_unicode",
 }
 
 
@@ -126,6 +132,7 @@ class SupplyChainDetector:
         self.sandbox_runner_path = os.path.join(_SCRIPTS_DIR, "sandbox_runner.js")
         self._nm_inspect_cache: Dict[Tuple[str, bool, int], Dict[str, Any]] = {}
         self._last_l2_obf_corroborated = False
+        self._last_sandbox_events: List[Dict[str, Any]] = []
 
     # --- Backward-compatible utility wrappers ---
     def _deobfuscate_shell_cmd(self, cmd: str) -> str:
@@ -346,6 +353,7 @@ class SupplyChainDetector:
             nm_cache=self._nm_inspect_cache,
             run_sandbox_fn=self._run_node_sandbox,
             subprocess_mod=subprocess,
+            events_out=self._last_sandbox_events,
         )
 
     # --- Full Scan Pipeline ---
@@ -354,6 +362,7 @@ class SupplyChainDetector:
         pkg_dir: str,
         tarball_path: Optional[str] = None,
         expected_sha512: Optional[str] = None,
+        baseline_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Runs all detection layers on a package directory or tarball (.tgz).
@@ -363,6 +372,8 @@ class SupplyChainDetector:
         actual_pkg_dir = pkg_dir
         self._nm_inspect_cache.clear()
         self._last_install_ctx_rules: Set[str] = set()
+        self._last_l2_obf_corroborated = False
+        self._last_sandbox_events = []
         is_tarball_input = os.path.isfile(pkg_dir) and pkg_dir.lower().endswith((".tgz", ".tar.gz", ".tar"))
 
         if is_tarball_input:
@@ -576,12 +587,26 @@ class SupplyChainDetector:
             total_score += l2_score
             all_findings.extend(l2_findings)
 
+            # Optional Offline Version Diff Analysis
+            diff_score = 0
+            diff_report: Optional[Dict[str, Any]] = None
+            if baseline_path:
+                diff_target = (
+                    tarball_path
+                    if (is_tarball_input and tarball_path and os.path.isfile(tarball_path))
+                    else actual_pkg_dir
+                )
+                diff_score, diff_findings, diff_report = analyze_version_diff(baseline_path, diff_target)
+                total_score += diff_score
+                all_findings.extend(diff_findings)
+
             # Layer 3: Dynamic Behavioral Sandbox Analysis
             l3_score, l3_findings = self.analyze_behavioral_sandbox(
                 actual_pkg_dir, manifest_data, is_tarball=is_tarball_input
             )
             total_score += l3_score
             all_findings.extend(l3_findings)
+            behavioral_summary = _l3_summarize_sandbox_events(self._last_sandbox_events)
 
             verdict = "MALICIOUS" if total_score >= self.risk_threshold else "BENIGN"
             risk_tier = (
@@ -590,7 +615,7 @@ class SupplyChainDetector:
                 else ("REVIEW" if (l1_res.has_install_capability or total_score >= 20) else "BENIGN")
             )
 
-            return {
+            result_obj: Dict[str, Any] = {
                 "package_name": package_name,
                 "version": version,
                 "package_path": os.path.abspath(pkg_dir),
@@ -602,11 +627,12 @@ class SupplyChainDetector:
                     "layer_1_manifest": l1_total_score,
                     "layer_1_dependency_graph": l1_graph_score,
                     "layer_1_integrity": l1_integrity_score,
+                    "layer_1_version_diff": diff_score,
                     "layer_2_source": l2_score,
                     "layer_3_behavioral": l3_score,
                 },
                 "signal_summary": {
-                    "hard_evidence_score": l1_res.hard_score + l1_graph_score + l1_integrity_score,
+                    "hard_evidence_score": l1_res.hard_score + l1_graph_score + l1_integrity_score + diff_score,
                     "capability_score": l1_res.capability_score,
                     "weak_anomaly_score": l1_res.weak_score,
                     "has_install_capability": l1_res.has_install_capability,
@@ -614,9 +640,13 @@ class SupplyChainDetector:
                 },
                 "dependency_graph": graph_metadata,
                 "integrity_check": integrity_report,
+                "behavioral_summary": behavioral_summary,
                 "findings_count": len(all_findings),
                 "findings": all_findings,
             }
+            if diff_report is not None:
+                result_obj["version_diff"] = diff_report
+            return result_obj
         finally:
             self._nm_inspect_cache.clear()
             if temp_extract_dir and os.path.exists(temp_extract_dir):
@@ -631,6 +661,7 @@ def main():
     parser.add_argument("--always-scan-l2", action="store_true", help="Always run Layer 2 static analysis even without hard Layer 1 evidence")
     parser.add_argument("--tarball", type=str, default=None, help="Optional path to .tgz artifact for SHA-512 integrity check")
     parser.add_argument("--expected-hash", type=str, default=None, help="Expected sha512-... integrity string for artifact verification")
+    parser.add_argument("--diff-base", type=str, default=None, help="Optional baseline version dir/.tgz for offline differential analysis")
     parser.add_argument("--output", type=str, default=None, help="Save telemetry output to JSON file")
     args = parser.parse_args()
 
@@ -643,17 +674,25 @@ def main():
     results = []
     if os.path.isfile(args.target) and args.target.endswith((".tgz", ".tar.gz")):
         telemetry = detector.scan_package(
-            args.target, tarball_path=args.tarball or args.target, expected_sha512=args.expected_hash
+            args.target,
+            tarball_path=args.tarball or args.target,
+            expected_sha512=args.expected_hash,
+            baseline_path=args.diff_base,
         )
         results.append(telemetry)
     elif os.path.exists(os.path.join(args.target, "package.json")):
-        telemetry = detector.scan_package(args.target, tarball_path=args.tarball, expected_sha512=args.expected_hash)
+        telemetry = detector.scan_package(
+            args.target,
+            tarball_path=args.tarball,
+            expected_sha512=args.expected_hash,
+            baseline_path=args.diff_base,
+        )
         results.append(telemetry)
     else:
         subdirs = sorted([os.path.join(args.target, d) for d in os.listdir(args.target) if os.path.isdir(os.path.join(args.target, d))])
         for sdir in subdirs:
             if os.path.exists(os.path.join(sdir, "package.json")):
-                telemetry = detector.scan_package(sdir)
+                telemetry = detector.scan_package(sdir, baseline_path=args.diff_base)
                 results.append(telemetry)
 
     print("\n" + "=" * 75)
@@ -664,6 +703,12 @@ def main():
         g_info = res.get("dependency_graph", {})
         nodes_cnt = g_info.get("total_nodes", 1)
         print(f"{v_tag:<12} {res['package_name']:<25} (v{res['version']:<8} | Graph Nodes: {nodes_cnt:<2}) -> Score: {res['risk_score']}")
+        if res.get("version_diff") and isinstance(res["version_diff"], dict) and "baseline_version" in res["version_diff"]:
+            vd = res["version_diff"]
+            print(
+                f"   [Version Diff] v{vd['baseline_version']} -> v{vd['target_version']} | "
+                f"Added: {len(vd.get('added_files', []))}, Modified: {len(vd.get('modified_files', []))}, Removed: {len(vd.get('removed_files', []))}"
+            )
         if res["findings"]:
             for f in res["findings"]:
                 print(f"   * [{f['layer']}] ({f['severity']}) {f['rule']}: {f['detail']}")

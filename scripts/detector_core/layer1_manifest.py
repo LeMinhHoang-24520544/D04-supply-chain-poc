@@ -9,9 +9,11 @@ Neutral 3-Tier Layer 1A Manifest Analyzer:
     Empty Description (+5).
 """
 
+import ipaddress
 import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from .constants import (
     AUTHOR_PUBLISH_HOOKS,
@@ -31,8 +33,18 @@ from .shell_analyzer import (
     classify_hook_command,
     deobfuscate_shell_cmd,
     inspect_binding_gyp,
+    inspect_build_files,
     match_suspicious_hook_patterns,
 )
+
+_DEP_CONF_SENTINEL_FAMILY = frozenset({"9.9.9", "9.9.10", "10.10.10", "11.11.11"})
+_NATIVE_BINARY_EXTS = (
+    ".node", ".exe", ".dll", ".so", ".dylib", ".wasm", ".bin",
+    ".a", ".lib", ".o", ".obj", ".pyc", ".zip", ".tgz", ".gz", ".tar", ".pdf", ".br",
+)
+_DISGUISED_CHECK_EXTS = (".js", ".cjs", ".mjs", ".json", ".txt", ".md", ".png", ".jpg", ".svg", ".dat", ".css")
+_MACHO_MAGICS = (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe")
+_INTERNAL_META_HOST_RE = re.compile(r"\.(?:internal|corp|intra|priv|lan)$", re.IGNORECASE)
 
 
 def damerau_levenshtein_distance(s1: str, s2: str) -> int:
@@ -156,6 +168,166 @@ def scan_auxiliary_scripts(
     return hits
 
 
+def _inspect_install_config_files(pkg_dir: str) -> List[Tuple[str, str, int]]:
+    """
+    Detects dangerous package-manager install configuration files (`npm-scan` install-config-abuse):
+    - `.pnpmfile.cjs` / `.pnpmfile.mjs` / `pnpmfile.js` defining `hooks.readPackage`
+    - `.yarnrc.yml` referencing remote `http(s)://` plugins
+    - `bunfig.toml` configuring `preload` or untrusted custom `registry` URL
+    Returns `[(kind, detail, points), ...]` where kind is 'hard' or 'cap'.
+    """
+    hits: List[Tuple[str, str, int]] = []
+    if not pkg_dir:
+        return hits
+
+    for pnpm_name in (".pnpmfile.cjs", ".pnpmfile.mjs", "pnpmfile.js"):
+        pnpm_path = os.path.join(pkg_dir, pnpm_name)
+        if not os.path.isfile(pnpm_path):
+            continue
+        try:
+            with open(pnpm_path, "r", encoding="utf-8", errors="ignore") as f:
+                src = f.read(128 * 1024)
+        except OSError:
+            continue
+        if re.search(r"\b(?:hooks|readPackage)\b", src):
+            is_risky = bool(
+                re.search(
+                    r"\.(?:scripts|dependencies|optionalDependencies)\b|"
+                    r"\b(?:child_process|execSync|spawn|eval|Function|fetch|require\s*\(\s*['\"](?:https?|net|fs))\b",
+                    src,
+                )
+            )
+            if is_risky:
+                hits.append(("hard", f"{pnpm_name} defines lifecycle/dependency mutation hook (`readPackage`)", 40))
+            else:
+                hits.append(("cap", f"{pnpm_name} defines pnpm package hook configuration", 20))
+        break
+
+    yarnrc_path = os.path.join(pkg_dir, ".yarnrc.yml")
+    if os.path.isfile(yarnrc_path):
+        try:
+            with open(yarnrc_path, "r", encoding="utf-8", errors="ignore") as f:
+                ysrc = f.read(64 * 1024)
+            if re.search(r"(?m)^\s*plugins\s*:", ysrc) and re.search(
+                r"(?:path|spec)\s*:\s*['\"]?https?://", ysrc, re.IGNORECASE
+            ):
+                hits.append(("hard", ".yarnrc.yml loads remote HTTP/HTTPS Yarn plugin", 40))
+        except OSError:
+            pass
+
+    bunfig_path = os.path.join(pkg_dir, "bunfig.toml")
+    if os.path.isfile(bunfig_path):
+        try:
+            with open(bunfig_path, "r", encoding="utf-8", errors="ignore") as f:
+                bsrc = f.read(64 * 1024)
+            if re.search(r"(?m)^\s*preload\s*=", bsrc):
+                hits.append(("hard", "bunfig.toml configures automatic `preload` script execution", 35))
+            else:
+                reg_m = re.search(r"(?m)^\s*registry\s*=\s*['\"]([^'\"]+)['\"]", bsrc)
+                if reg_m:
+                    rurl = reg_m.group(1).strip()
+                    host = (urlparse(rurl).hostname or "").lower()
+                    if host and host not in ("registry.npmjs.org", "registry.yarnpkg.com", "localhost", "127.0.0.1"):
+                        hits.append(("hard", f"bunfig.toml points registry to untrusted URL '{rurl}'", 35))
+        except OSError:
+            pass
+
+    return hits
+
+
+def _detect_disguised_native_binary(pkg_dir: str, max_files: int = 500) -> Optional[str]:
+    """
+    Detects compiled ELF / verified PE / Mach-O executables disguised with non-native
+    extensions (`.js`, `.txt`, `.png`, `.json`, etc.), adapted from GuardDog `bundled_binary.py`.
+    """
+    if not pkg_dir:
+        return None
+    checked = 0
+    for root, dirs, files in os.walk(pkg_dir):
+        dirs[:] = sorted(d for d in dirs if d not in (".git", "node_modules"))
+        for fname in sorted(files):
+            fname_l = fname.lower()
+            if fname_l.endswith(_NATIVE_BINARY_EXTS) or not fname_l.endswith(_DISGUISED_CHECK_EXTS):
+                continue
+            checked += 1
+            if checked > max_files:
+                return None
+            full_p = os.path.join(root, fname)
+            try:
+                fsize = os.path.getsize(full_p)
+                if fsize < 64:
+                    continue
+                with open(full_p, "rb") as bf:
+                    head4 = bf.read(4)
+                    magic = ""
+                    if head4.startswith(b"\x7fELF"):
+                        magic = "ELF"
+                    elif head4 in _MACHO_MAGICS:
+                        magic = "Mach-O"
+                    elif head4.startswith(b"MZ"):
+                        rest60 = bf.read(60)
+                        head = head4 + rest60
+                        if len(head) >= 64:
+                            e_lfanew = int.from_bytes(head[60:64], "little")
+                            if 64 <= e_lfanew <= min(65536, fsize - 4):
+                                bf.seek(e_lfanew)
+                                pe_sig = bf.read(4)
+                                if pe_sig == b"PE\x00\x00":
+                                    magic = "PE/COFF"
+                    if magic:
+                        rel_p = os.path.relpath(full_p, pkg_dir).replace("\\", "/")
+                        return f"{magic} executable disguised as '{rel_p}'"
+            except OSError:
+                continue
+    return None
+
+
+def _find_internal_metadata_urls(data: Dict[str, Any]) -> List[str]:
+    """Extracts internal corporate domains or RFC1918 IPs in `repository`/`homepage`/`bugs`."""
+    candidates: List[Tuple[str, str]] = []
+    repo = data.get("repository")
+    if isinstance(repo, str):
+        candidates.append(("repository", repo))
+    elif isinstance(repo, dict) and isinstance(repo.get("url"), str):
+        candidates.append(("repository.url", repo["url"]))
+    if isinstance(data.get("homepage"), str):
+        candidates.append(("homepage", data["homepage"]))
+    bugs = data.get("bugs")
+    if isinstance(bugs, str):
+        candidates.append(("bugs", bugs))
+    elif isinstance(bugs, dict) and isinstance(bugs.get("url"), str):
+        candidates.append(("bugs.url", bugs["url"]))
+
+    suspicious: List[str] = []
+    for field, raw_url in candidates:
+        u = raw_url.strip()
+        if not u:
+            continue
+        norm = re.sub(r"^git\+", "", u, flags=re.IGNORECASE)
+        host = ""
+        if "://" in norm:
+            try:
+                host = (urlparse(norm).hostname or "").lower().rstrip(".")
+            except ValueError:
+                host = ""
+        else:
+            scp = re.match(r"^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):", norm)
+            if scp:
+                host = scp.group(1).lower().rstrip(".")
+        if not host or host in ("localhost", "127.0.0.1", "::1") or "verdaccio" in host:
+            continue
+        if _INTERNAL_META_HOST_RE.search(host):
+            suspicious.append(f"{field}={u}")
+            continue
+        try:
+            ip_obj = ipaddress.ip_address(host)
+            if ip_obj.is_private and not ip_obj.is_loopback and not ip_obj.is_link_local:
+                suspicious.append(f"{field}={u}")
+        except ValueError:
+            pass
+    return suspicious
+
+
 def analyze_manifest_structured(
     pkg_path: str,
     data: Dict[str, Any],
@@ -181,8 +353,8 @@ def analyze_manifest_structured(
     has_install_capability = False
     has_suspicious_install_hook = False
 
-    # 0. Cross-check binding.gyp for genuine malicious command execution via <!()
-    gyp_issues = inspect_binding_gyp(pkg_path)
+    # 0. Cross-check binding.gyp for genuine malicious command execution / undeclared gyp / bad flags
+    gyp_issues = inspect_binding_gyp(pkg_path, manifest=data)
     gyp_malicious = bool(gyp_issues)
     for g_issue in gyp_issues:
         hard_score += 50
@@ -351,6 +523,51 @@ def analyze_manifest_structured(
                         "detail": detail_msg,
                     })
 
+    # 1a-bis. Install-config abuse (.pnpmfile.cjs, .yarnrc.yml, bunfig.toml) & build files (Makefile/CMakeLists.txt)
+    for cfg_kind, cfg_detail, cfg_pts in _inspect_install_config_files(pkg_path):
+        if cfg_kind == "hard":
+            hard_score += cfg_pts
+            has_hard_evidence = True
+            findings.append({
+                "layer": "Layer 1 - Manifest",
+                "rule": "Suspicious Package Manager Hook Config",
+                "severity": "HIGH",
+                "detail": cfg_detail,
+            })
+        else:
+            has_install_capability = True
+            pts = max(0, 20 - capability_points_assigned)
+            capability_points_assigned += pts
+            capability_score += pts
+            findings.append({
+                "layer": "Layer 1 - Manifest",
+                "rule": "Suspicious Package Manager Hook Config",
+                "severity": "MEDIUM",
+                "detail": cfg_detail,
+            })
+
+    for b_issue in inspect_build_files(pkg_path, all_hook_commands):
+        hard_score += 45
+        has_hard_evidence = True
+        findings.append({
+            "layer": "Layer 1 - Manifest",
+            "rule": "Malicious Build Config Injection",
+            "severity": "CRITICAL",
+            "detail": b_issue,
+        })
+
+    # 1a-ter. Disguised compiled executable binaries inside source/asset files
+    disguised_bin = _detect_disguised_native_binary(pkg_path)
+    if disguised_bin:
+        hard_score += 45
+        has_hard_evidence = True
+        findings.append({
+            "layer": "Layer 1 - Manifest",
+            "rule": "Disguised Native Executable Binary",
+            "severity": "CRITICAL",
+            "detail": f"Detected {disguised_bin}",
+        })
+
     # 1b. Scan auxiliary shell/script files
     aux_hits = scan_auxiliary_scripts(
         pkg_path, all_hook_commands, manifest=data, is_tarball=is_tarball, nm_cache=nm_cache
@@ -368,16 +585,22 @@ def analyze_manifest_structured(
             })
         elif not unref_aux_scored:
             unref_aux_scored = True
-            hard_score += 35
-            has_hard_evidence = True
+            weak_score += 20
             findings.append({
                 "layer": "Layer 1 - Manifest",
                 "rule": "Suspicious Auxiliary Script Pattern",
-                "severity": "CRITICAL",
-                "detail": f"{desc} in auxiliary script '{rel_p}'",
+                "severity": "MEDIUM",
+                "detail": f"{desc} in unreferenced auxiliary script '{rel_p}'",
             })
 
     # 2. Version anomalies (Dependency Confusion)
+    def _is_yyyymmdd_calver(val: int) -> bool:
+        if not (20150101 <= val <= 20351231):
+            return False
+        mm = (val // 100) % 100
+        dd = val % 100
+        return 1 <= mm <= 12 and 1 <= dd <= 31
+
     version_str = str(data.get("version", "1.0.0")).strip()
     ver_core = re.split(r"[-+]", version_str, maxsplit=1)[0]
     ver_parts = ver_core.split(".")
@@ -386,21 +609,31 @@ def analyze_manifest_structured(
         minor_version = int(ver_parts[1]) if len(ver_parts) > 1 and ver_parts[1].isdigit() else 0
         patch_version = int(ver_parts[2]) if len(ver_parts) > 2 and ver_parts[2].isdigit() else 0
 
-        is_calver = 2015 <= major_version <= 2035 and 1 <= minor_version <= 12 and patch_version < 999
+        is_calver = (
+            (2015 <= major_version <= 2035 and 1 <= minor_version <= 12 and patch_version < 999)
+            or (major_version < 90 and _is_yyyymmdd_calver(minor_version) and patch_version < 999)
+        )
         is_high_ver = (
             (major_version >= SUSPICIOUS_VERSION_THRESHOLD and not is_calver)
-            or minor_version >= 999
+            or (minor_version >= 999 and not is_calver)
             or patch_version >= 999
         )
-        if is_high_ver:
-            js_count = 0
+        pkg_name_l = str(data.get("name", "")).strip().lower()
+        has_scope_tmp = "/" in pkg_name_l
+        unscoped_tmp = pkg_name_l.split("/")[-1] if has_scope_tmp else pkg_name_l
+        is_reputable_tmp = (
+            unscoped_tmp in POPULAR_NPM_PACKAGES
+            or any(pkg_name_l.startswith(sc) for sc in TRUSTED_OFFICIAL_SCOPES)
+        )
+        js_count = 0
+        if is_high_ver or (ver_core in _DEP_CONF_SENTINEL_FAMILY):
             for root, dirs, files in os.walk(pkg_path):
                 dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")]
                 js_count += sum(1 for fn in files if fn.endswith((".js", ".cjs", ".mjs")))
 
-            pkg_name_l = str(data.get("name", "")).strip().lower()
-            has_repo = bool(data.get("repository"))
-            has_internal_name = bool(re.search(r"(?:^|[-_/])(?:internal|corp|private|staging)(?:[-_/]|$)", pkg_name_l))
+        has_repo = bool(data.get("repository"))
+        has_internal_name = bool(re.search(r"(?:^|[-_/])(?:internal|corp|private|staging)(?:[-_/]|$)", pkg_name_l))
+        if is_high_ver:
             has_untrusted_dep = False
             for dep_f in ("dependencies", "optionalDependencies"):
                 dep_obj = data.get(dep_f, {})
@@ -434,8 +667,30 @@ def analyze_manifest_structured(
                     "severity": "CRITICAL",
                     "detail": f"Abnormally high version '{version_str}' (major >= {SUSPICIOUS_VERSION_THRESHOLD} or minor/patch >= 999)",
                 })
+        elif (
+            ver_core in _DEP_CONF_SENTINEL_FAMILY
+            and not is_reputable_tmp
+            and (has_suspicious_install_hook or has_internal_name or js_count <= 3)
+        ):
+            weak_score += 35
+            findings.append({
+                "layer": "Layer 1 - Manifest",
+                "rule": "Dependency Confusion Indicator",
+                "severity": "HIGH",
+                "detail": f"Sentinel version '{version_str}' paired with install/internal/minimal-footprint indicator",
+            })
     except (ValueError, IndexError):
         pass
+
+    internal_meta_urls = _find_internal_metadata_urls(data)
+    if internal_meta_urls:
+        weak_score += 15
+        findings.append({
+            "layer": "Layer 1 - Manifest",
+            "rule": "Spoofed Internal Metadata URL",
+            "severity": "MEDIUM",
+            "detail": f"Package metadata references internal/private host URL: {', '.join(internal_meta_urls[:2])}",
+        })
 
     # 3. Typosquatting / Brandjacking Indicator (Tier 3 Weak Anomaly, escalates with install capability)
     pkg_name_raw = str(data.get("name", "")).strip().lower()

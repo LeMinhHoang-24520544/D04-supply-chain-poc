@@ -311,6 +311,10 @@ SUSPICIOUS_SCRIPT_PATTERNS = [
         r"\b(?:sleep\s+\d+|timeout\s+/t)\b",
         "Suspicious sleep/delay evasion technique",
     ),
+    (
+        r"\b(?:bun\s+(?:-e|--eval)\b|deno\s+eval\b|deno\s+run\b[^\n]*--allow-(?:all|run|net)\b[^\n]*https?://|qjs\s+-e\b)",
+        "Alternative JS runtime inline/remote execution (bun/deno/qjs)",
+    ),
 ]
 
 INLINE_NODE_RISK_RE = re.compile(
@@ -393,6 +397,15 @@ DECODED_PAYLOAD_INDICATORS = re.compile(
     re.IGNORECASE,
 )
 
+# High-precision decoded indicator set used for minified/bundled files to avoid FP on SDK workers
+MINIFIED_STRICT_DECODED_INDICATORS = re.compile(
+    r"(?:\bchild_process\b|\b(?:execSync|execFileSync|spawnSync)\b|"
+    r"(?<!\.)\beval\s*\(|\bnew\s+Function\s*\(|"
+    r"/bin/sh\b|/bin/bash\b|cmd\.exe\b|powershell\b|\bcurl\s+|\bwget\s+|"
+    r"/etc/passwd\b|/etc/shadow\b|\.ssh[/\\]|\.npmrc\b|C:\\\\?Users\\\\?Public)",
+    re.IGNORECASE,
+)
+
 RUNTIME_CAPABLE_JS_TOKENS = re.compile(
     r"\b(require|import|eval|Function|process|global|globalThis|window|document|self|"
     r"fetch|XMLHttpRequest|WebSocket|Buffer|atob|setTimeout|setInterval|Atomics|"
@@ -418,14 +431,16 @@ DOC_AND_CGNAT_NETS = (
 SENSITIVE_ENV_KEY_NAMES = (
     "NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN|"
     "AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|"
-    "AZURE_CLIENT_SECRET|OPENAI_API_KEY|ANTHROPIC_API_KEY|"
+    "AZURE_CLIENT_SECRET|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|"
+    "CURSOR_API_KEY|HF_TOKEN|PYPI_TOKEN|VERCEL_TOKEN|CLOUDFLARE_API_TOKEN|"
     "SLACK_TOKEN|DISCORD_TOKEN|STRIPE_KEY|DATABASE_URL|CI_JOB_TOKEN|DOCKER_PASSWORD"
 )
 
 EXFIL_SENSITIVE_ENV_KEY_NAMES = (
     "NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN|"
     "AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN|"
-    "AZURE_CLIENT_SECRET|SLACK_TOKEN|DISCORD_TOKEN|STRIPE_KEY|CI_JOB_TOKEN|DOCKER_PASSWORD"
+    "AZURE_CLIENT_SECRET|CURSOR_API_KEY|HF_TOKEN|PYPI_TOKEN|VERCEL_TOKEN|CLOUDFLARE_API_TOKEN|"
+    "SLACK_TOKEN|DISCORD_TOKEN|STRIPE_KEY|CI_JOB_TOKEN|DOCKER_PASSWORD"
 )
 
 SENSITIVE_OS_RECON_FUNCS = ("userInfo", "networkInterfaces", "hostname", "homedir")

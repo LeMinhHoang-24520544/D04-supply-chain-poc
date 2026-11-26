@@ -33,25 +33,55 @@ SANDBOX_TELEMETRY_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 _NODE_PERMISSION_FLAGS: Optional[List[str]] = None
 
 
-def get_node_permission_flags(subprocess_mod) -> List[str]:
+def _normalize_perm_paths(raw_paths: List[str]) -> List[str]:
+    """Normalizes and deduplicates paths (with uppercase Windows drive letters for Node --permission)."""
+    seen: set = set()
+    out: List[str] = []
+    for rp in raw_paths:
+        if not rp:
+            continue
+        for cand in (os.path.abspath(rp), os.path.realpath(rp)):
+            norm_v = os.path.normpath(cand)
+            if len(norm_v) >= 2 and norm_v[1] == ":" and norm_v[0].isalpha():
+                norm_v = norm_v[0].upper() + norm_v[1:]
+            if norm_v not in seen:
+                seen.add(norm_v)
+                out.append(norm_v)
+    return out
+
+
+def get_node_permission_flags(
+    subprocess_mod,
+    allowed_read_paths: Optional[List[str]] = None,
+) -> List[str]:
     """Detects once whether Node.js supports `--permission` (22+) or `--experimental-permission` (20/21)."""
     global _NODE_PERMISSION_FLAGS
-    if _NODE_PERMISSION_FLAGS is not None:
-        return _NODE_PERMISSION_FLAGS
-    for flag in ("--permission", "--experimental-permission"):
-        try:
-            res = subprocess_mod.run(
-                ["node", "--no-warnings", flag, "--allow-fs-read=*", "-e", ""],
-                capture_output=True,
-                timeout=3,
-            )
-            if res.returncode == 0:
-                _NODE_PERMISSION_FLAGS = ["--no-warnings", flag, "--allow-fs-read=*"]
-                return _NODE_PERMISSION_FLAGS
-        except Exception:
-            continue
-    _NODE_PERMISSION_FLAGS = ["--no-warnings"]
-    return _NODE_PERMISSION_FLAGS
+    if _NODE_PERMISSION_FLAGS is None:
+        detected = ["--no-warnings"]
+        for flag in ("--permission", "--experimental-permission"):
+            try:
+                res = subprocess_mod.run(
+                    ["node", "--no-warnings", flag, "--allow-fs-read=*", "-e", ""],
+                    capture_output=True,
+                    timeout=3,
+                )
+                if res.returncode == 0:
+                    detected = ["--no-warnings", flag, "--allow-fs-read=*"]
+                    break
+            except Exception:
+                continue
+        _NODE_PERMISSION_FLAGS = detected
+
+    if allowed_read_paths and len(_NODE_PERMISSION_FLAGS) >= 2 and _NODE_PERMISSION_FLAGS[1] in (
+        "--permission",
+        "--experimental-permission",
+    ):
+        scoped = _normalize_perm_paths(allowed_read_paths)
+        if scoped:
+            return [_NODE_PERMISSION_FLAGS[0], _NODE_PERMISSION_FLAGS[1]] + [
+                f"--allow-fs-read={p}" for p in scoped
+            ]
+    return list(_NODE_PERMISSION_FLAGS)
 
 
 def collect_sandbox_targets(
@@ -234,23 +264,31 @@ def run_node_sandbox(
         SANDBOX_TELEMETRY_CACHE[cache_key] = []
         return []
 
+    runner_abs = _normalize_perm_paths([sandbox_runner_path])[0]
+    pkg_abs = _normalize_perm_paths([pkg_dir])[0]
     payload_json = json.dumps({"hooks": active_hooks, "files": target_files})
-    cmd = ["node"] + get_node_permission_flags(subprocess_mod) + [
-        sandbox_runner_path,
-        os.path.abspath(pkg_dir),
+    perm_flags = get_node_permission_flags(
+        subprocess_mod,
+        allowed_read_paths=[os.path.dirname(runner_abs), pkg_abs],
+    )
+    cmd = ["node"] + perm_flags + [
+        runner_abs,
+        pkg_abs,
         payload_json,
     ]
 
     events: List[Dict[str, Any]] = []
     try:
-        proc = subprocess_mod.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=2.0,
-        )
+        run_kwargs: Dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "ignore",
+            "timeout": 2.0,
+        }
+        if os.path.isdir(pkg_abs):
+            run_kwargs["cwd"] = pkg_abs
+        proc = subprocess_mod.run(cmd, **run_kwargs)
         stdout_lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
         telemetry_line = None
         for line in reversed(stdout_lines):
@@ -452,6 +490,45 @@ def score_sandbox_events(events: List[Dict[str, Any]]) -> Tuple[int, List[Dict[s
     return score, findings
 
 
+def summarize_sandbox_events(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Builds a structured OSSF-style 4-axis summary (`commands`, `files`, `network`, `env`) plus phase counts."""
+    phases = {"install": 0, "import": 0, "export_fuzz": 0}
+    axes: Dict[str, Any] = {
+        "commands": [],
+        "files": {"read": [], "write": [], "sensitive": []},
+        "network": [],
+        "env": [],
+    }
+
+    def _push(target_list: List[str], val: str) -> None:
+        if len(target_list) < 50 and val not in target_list:
+            target_list.append(val)
+
+    for ev in events or []:
+        raw_ph = str(ev.get("phase") or "")
+        ph = raw_ph if raw_ph in phases else ("export_fuzz" if raw_ph == "export_fuzz" else "import")
+        phases[ph] += 1
+        cat = ev.get("category", "")
+        entry = f"{ev.get('api', '')}: {ev.get('detail', '')}"
+        if cat == "CHILD_PROCESS_SPAWN":
+            _push(axes["commands"], entry)
+        elif cat == "FS_SENSITIVE_READ":
+            _push(axes["files"]["sensitive"], entry)
+            _push(axes["files"]["read"], entry)
+        elif cat in ("FS_EXTERNAL_WRITE", "FS_INTERNAL_WRITE"):
+            _push(axes["files"]["write"], entry)
+        elif cat in ("NETWORK_EGRESS", "DNS_EXFILTRATION", "RAW_SOCKET_CONNECT"):
+            _push(axes["network"], entry)
+        elif cat in ("ENV_HARVESTING", "ENV_ENUMERATION"):
+            _push(axes["env"], entry)
+
+    return {
+        "events_count": len(events or []),
+        "phases": phases,
+        "axes": axes,
+    }
+
+
 def analyze_behavioral_sandbox(
     sandbox_runner_path: str,
     pkg_dir: str,
@@ -461,6 +538,7 @@ def analyze_behavioral_sandbox(
     nm_cache: Optional[Dict[Tuple[str, bool, int], Dict[str, Any]]] = None,
     run_sandbox_fn: Optional[Callable[[str, Dict[str, str], List[str]], List[Dict[str, Any]]]] = None,
     subprocess_mod=None,
+    events_out: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """Layer 3 orchestration calling `run_sandbox_fn` (preserves `_run_node_sandbox` monkeypatching)."""
     active_hooks, target_files = collect_sandbox_targets(
@@ -481,4 +559,6 @@ def analyze_behavioral_sandbox(
             target_files,
             subprocess_mod or _std_subproc,
         )
+    if events_out is not None and events:
+        events_out.extend(events)
     return score_sandbox_events(events)

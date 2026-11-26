@@ -348,11 +348,13 @@ def extract_gyp_command_expansions(gyp_content: str) -> List[str]:
     return expansions
 
 
-def inspect_binding_gyp(pkg_dir: str) -> List[str]:
+def inspect_binding_gyp(
+    pkg_dir: str,
+    manifest: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """
-    Principled inspection of `binding.gyp` `<!(...)` / `<!@(...)` expansions.
-    Benign path/compiler probes (`node -p "process.arch"`, `python3 -c "import sys..."`, `pkg-config`,
-    `which`, `uname`) are NOT penalized; only concrete network/decode/shell-exec/secret indicators trigger.
+    Principled inspection of `binding.gyp` `<!(...)` / `<!@(...)` expansions, suspicious
+    compiler/linker flags, and undeclared gyp shell actions.
     """
     if not pkg_dir:
         return []
@@ -367,7 +369,8 @@ def inspect_binding_gyp(pkg_dir: str) -> List[str]:
 
     findings: List[str] = []
     inline_node_re = re.compile(r"\bnode\s+(?:-[^\s]*\s+)*(?:-e|--eval|-p|--print)\b", re.IGNORECASE)
-    for raw_expr in extract_gyp_command_expansions(gyp_content):
+    expansions = extract_gyp_command_expansions(gyp_content)
+    for raw_expr in expansions:
         norm_expr = re.sub(r"\\+(['\"])", r"\1", raw_expr).strip()
         if not norm_expr or _GYP_BENIGN_ADDON_RE.match(norm_expr):
             continue
@@ -391,6 +394,127 @@ def inspect_binding_gyp(pkg_dir: str) -> List[str]:
             preview = re.sub(r"\s+", " ", norm_expr)[:100]
             reason = (concrete_descs[0] if concrete_descs else (matched_descs[0] if matched_descs else "Suspicious command in binding.gyp"))
             findings.append(f"{reason} in binding.gyp <!({preview})")
+
+    # Suspicious C/C++ compiler defines or linker libraries (`npm-scan` build-config-abuse)
+    non_comment_gyp = "\n".join(
+        ln for ln in gyp_content.splitlines() if not ln.lstrip().startswith("#")
+    )
+    if re.search(
+        r"-D\s*[A-Za-z0-9_]+=system\b|(?:^|[\s'\"])-l(?:curl|pcap)\b|\bcurl_easy_perform\b",
+        non_comment_gyp,
+        re.IGNORECASE,
+    ):
+        findings.append("Suspicious native compiler/linker flag (-D...=system / -lcurl / -lpcap) in binding.gyp")
+
+    # Undeclared binding.gyp shell/action execution without gypfile or native build declaration
+    if isinstance(manifest, dict) and not findings:
+        scripts = manifest.get("scripts") if isinstance(manifest.get("scripts"), dict) else {}
+        scripts_blob = " ".join(str(v) for v in scripts.values()).lower()
+        deps_keys: Set[str] = set()
+        for dk_field in ("dependencies", "devDependencies", "optionalDependencies"):
+            dk_obj = manifest.get(dk_field)
+            if isinstance(dk_obj, dict):
+                deps_keys.update(str(k).lower() for k in dk_obj.keys())
+        declared_native = (
+            bool(manifest.get("gypfile"))
+            or any(
+                kw in scripts_blob
+                for kw in ("node-gyp", "node-pre-gyp", "prebuild", "cmake-js", "napi", "gyp")
+            )
+            or bool(
+                deps_keys & {"node-gyp", "node-pre-gyp", "@mapbox/node-pre-gyp", "prebuild", "prebuild-install", "node-gyp-build", "nan", "node-addon-api", "bindings"}
+            )
+        )
+        has_shell_action = bool(
+            re.search(
+                r"['\"]actions['\"]\s*:[\s\S]{0,400}['\"](?:sh|bash|cmd|powershell|pwsh|curl|wget)['\"]",
+                non_comment_gyp,
+                re.IGNORECASE,
+            )
+        )
+        if not declared_native and (expansions or has_shell_action):
+            findings.append("Undeclared binding.gyp executes shell/action commands without gypfile or native build dependency")
+
+    return findings
+
+
+def _extract_balanced_paren_calls(text: str, prefix_re: re.Pattern, max_len: int = 1000) -> List[str]:
+    """Extracts balanced `(...)` blocks following matches of `prefix_re`."""
+    results: List[str] = []
+    n = len(text)
+    for m in prefix_re.finditer(text):
+        i = m.end()
+        depth = 1
+        quote = ""
+        limit = min(n, i + max_len)
+        while i < limit and depth > 0:
+            ch = text[i]
+            if quote:
+                if ch == "\\" and i + 1 < limit:
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+            else:
+                if ch in ("'", '"', "`"):
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        results.append(text[m.end():i])
+                        break
+            i += 1
+    return results
+
+
+def inspect_build_files(pkg_dir: str, hook_commands: List[str]) -> List[str]:
+    """
+    Inspects root `Makefile` / `CMakeLists.txt` when any lifecycle hook invokes `make`/`cmake`
+    (`npm-scan` build-config-abuse).
+    """
+    if not pkg_dir or not hook_commands:
+        return []
+    hooks_blob = "\n".join(str(c) for c in hook_commands)
+    if not re.search(r"\b(?:make|gmake|cmake|cmake-js|ninja)\b", hooks_blob, re.IGNORECASE):
+        return []
+
+    findings: List[str] = []
+    makefile_path = os.path.join(pkg_dir, "Makefile")
+    if os.path.isfile(makefile_path):
+        try:
+            with open(makefile_path, "r", encoding="utf-8", errors="ignore") as mf:
+                mf_lines = [ln for ln in mf.read(256 * 1024).splitlines() if not ln.lstrip().startswith("#")]
+            mf_clean = "\n".join(mf_lines)
+            for shell_body in _extract_balanced_paren_calls(mf_clean, re.compile(r"\$\(\s*shell\s+")):
+                deobf_body = deobfuscate_shell_cmd(shell_body)
+                matched = match_suspicious_hook_patterns(shell_body, deobf_body, is_author_hook=False)
+                if matched or _GYP_MALICIOUS_RE.search(shell_body):
+                    preview = re.sub(r"\s+", " ", shell_body).strip()[:80]
+                    findings.append(f"Suspicious $(shell ...) command in Makefile: {preview}")
+                    break
+        except OSError:
+            pass
+
+    cmake_path = os.path.join(pkg_dir, "CMakeLists.txt")
+    if os.path.isfile(cmake_path):
+        try:
+            with open(cmake_path, "r", encoding="utf-8", errors="ignore") as cf:
+                cf_lines = [ln for ln in cf.read(256 * 1024).splitlines() if not ln.lstrip().startswith("#")]
+            cf_clean = "\n".join(cf_lines)
+            for exec_body in _extract_balanced_paren_calls(cf_clean, re.compile(r"\bexecute_process\s*\(", re.IGNORECASE)):
+                if re.search(
+                    r"\b(?:curl|wget|powershell|pwsh|Invoke-WebRequest|bash\s+-c|sh\s+-c)\b|/dev/(?:tcp|udp)/",
+                    exec_body,
+                    re.IGNORECASE,
+                ):
+                    preview = re.sub(r"\s+", " ", exec_body).strip()[:80]
+                    findings.append(f"Suspicious execute_process() command in CMakeLists.txt: {preview}")
+                    break
+        except OSError:
+            pass
+
     return findings
 
 
@@ -687,6 +811,54 @@ def extract_node_targets_from_cmd(cmd_str: str) -> List[str]:
                     continue
                 targets.append(t)
                 break
+        elif tok_base in ("bun", "bun.exe"):
+            i += 1
+            if i < len(tokens) and tokens[i] == "run":
+                i += 1
+            expect_val = False
+            while i < len(tokens):
+                t = tokens[i]
+                if t in ctrl_ops:
+                    break
+                if expect_val:
+                    expect_val = False
+                    i += 1
+                    continue
+                if t in ("-e", "--eval", "-p", "--print", "-r", "--preload", "-c", "--config", "--cwd"):
+                    expect_val = True
+                    i += 1
+                    continue
+                if t.startswith("-"):
+                    i += 1
+                    continue
+                if t.endswith((".js", ".cjs", ".mjs", ".ts", ".jsx", ".tsx")) or "/" in t:
+                    targets.append(t)
+                break
+        elif tok_base in ("deno", "deno.exe"):
+            i += 1
+            if i < len(tokens) and tokens[i] == "run":
+                i += 1
+                expect_val = False
+                while i < len(tokens):
+                    t = tokens[i]
+                    if t in ctrl_ops:
+                        break
+                    if expect_val:
+                        expect_val = False
+                        i += 1
+                        continue
+                    if t in ("-c", "--config", "--import-map", "--location", "--lock"):
+                        expect_val = True
+                        i += 1
+                        continue
+                    if t.startswith("-"):
+                        i += 1
+                        continue
+                    if not t.startswith(("http://", "https://")) and (
+                        t.endswith((".js", ".cjs", ".mjs", ".ts", ".tsx")) or "/" in t
+                    ):
+                        targets.append(t)
+                    break
         elif tokens[i].startswith(("./", "bin/", "scripts/")) and "/" in tokens[i]:
             targets.append(tokens[i])
         i += 1

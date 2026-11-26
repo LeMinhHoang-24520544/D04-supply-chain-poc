@@ -23,6 +23,7 @@ from .constants import (
     IGNORED_TEST_DOC_SEG_RE,
     INSTALL_IDENTITY_OS_RECON_FUNCS,
     MALICIOUS_EXFIL_ENDPOINT_REGEX,
+    MINIFIED_STRICT_DECODED_INDICATORS,
     PUBLIC_DNS_IPS,
     SAFE_NON_SHELL_TOOLS,
     SENSITIVE_OS_RECON_FUNCS,
@@ -30,6 +31,14 @@ from .constants import (
     SOURCE_CRITICAL_EXEC_PATTERNS,
     STATIC_NON_CODE_EXTENSIONS,
     SUSPICIOUS_SCRIPT_PATTERNS,
+)
+from .js_analyzer import (
+    detect_delayed_exec_timers,
+    detect_self_defending_evasion,
+    detect_structural_obfuscators,
+    detect_trojan_source,
+    fold_js_expressions,
+    is_at_top_level_scope,
 )
 from .layer1_graph_integrity import extract_github_owner_repo, inspect_bundled_node_modules
 from .shell_analyzer import (
@@ -362,8 +371,9 @@ def verify_decoded_payload_bytes(
     decoded_bytes: bytes,
     encoding_label: str,
     has_url_risk_context: bool = False,
+    is_minified: bool = False,
 ) -> Optional[str]:
-    """Semantically verifies decoded Base64/Hex bytes against `DECODED_PAYLOAD_INDICATORS`."""
+    """Semantically verifies decoded Base64/Hex bytes against payload execution indicators."""
     if not decoded_bytes or len(decoded_bytes) < 8:
         return None
     printable = sum(1 for b in decoded_bytes if (0x20 <= b <= 0x7E) or b in (9, 10, 13))
@@ -371,44 +381,55 @@ def verify_decoded_payload_bytes(
         return None
 
     decoded_text = decoded_bytes.decode("utf-8", errors="ignore")
-    if "-----BEGIN " in decoded_text and "-----END " in decoded_text:
-        return None
     if '"version":3' in decoded_text and '"mappings":' in decoded_text:
         return None
     if "sourceMappingURL=" in decoded_text and "eval" not in decoded_text:
         return None
 
-    cleaned = HARMLESS_XML_NS_RE.sub(" ", decoded_text)
-    preview = re.sub(r"\s+", " ", decoded_text).strip()[:80]
-    if DECODED_PAYLOAD_INDICATORS.search(cleaned):
+    # Strip PEM cert/key blocks rather than returning early so appended payloads cannot evade
+    cleaned = re.sub(r"-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----", " ", decoded_text)
+    cleaned = HARMLESS_XML_NS_RE.sub(" ", cleaned)
+    if not cleaned.strip():
+        return None
+    preview = re.sub(r"\s+", " ", cleaned).strip()[:80]
+    indicator_re = MINIFIED_STRICT_DECODED_INDICATORS if is_minified else DECODED_PAYLOAD_INDICATORS
+    if indicator_re.search(cleaned):
         return f"Decoded {encoding_label} payload contains executable indicator: '{preview}'"
     if re.search(r"(?:https?|wss?)://[^\s'\"`<>]+", cleaned, re.IGNORECASE):
         exfil_ep = find_suspicious_exfil_endpoints(cleaned)
-        if exfil_ep or has_url_risk_context:
+        if exfil_ep or (not is_minified and has_url_risk_context):
             return f"Decoded {encoding_label} payload contains suspicious URL indicator: '{preview}'"
     return None
 
 
 def inspect_encoded_strings(
-    norm_code: str, has_url_risk_context: bool = False
+    norm_code: str,
+    has_url_risk_context: bool = False,
+    is_minified: bool = False,
 ) -> Tuple[bool, Optional[str]]:
-    """Rule 2.8: Semantically verified encoded payload inspection."""
+    """Rule 2.8: Semantically verified encoded payload inspection with OSSF Base64/bundle FP guards."""
     if not norm_code:
         return False, None
 
     for uri_match in re.finditer(
-        r"data:([^,'\"`\s]+);base64,([A-Za-z0-9+/=]{24,})['\"`](?:\s*\.\s*(?:split|slice|substring|replace)\s*\()?",
+        r"data:([^,'\"`\s]+);base64,([A-Za-z0-9+/=]{24,65536})['\"`](?:\s*\.\s*(?:split|slice|substring|replace)\s*\()?",
         norm_code,
         re.IGNORECASE,
     ):
         mime = uri_match.group(1).lower()
         is_manipulated = uri_match.group(0).rstrip().endswith("(")
-        if not is_manipulated and (mime.startswith("image/") or mime.startswith("font/")):
+        if not is_manipulated and (
+            mime.startswith(("image/", "font/", "audio/", "video/"))
+            or mime in ("application/wasm", "application/octet-stream")
+        ):
             continue
         try:
             raw = base64.b64decode(uri_match.group(2), validate=True)
             verdict = verify_decoded_payload_bytes(
-                raw, "Data-URI Base64", has_url_risk_context=has_url_risk_context
+                raw,
+                "Data-URI Base64",
+                has_url_risk_context=has_url_risk_context,
+                is_minified=is_minified,
             )
             if verdict:
                 return True, verdict
@@ -418,39 +439,58 @@ def inspect_encoded_strings(
     has_reverse = bool(re.search(r"\.reverse\s*\(", norm_code))
     has_b64url = bool(re.search(r"base64url", norm_code, re.IGNORECASE))
     lit_pattern = (
-        r"(['\"`])([A-Za-z0-9+/=_-]{24,})\1"
+        r"(['\"`])([A-Za-z0-9+/=_-]{24,65536})\1"
         if (has_b64url or has_reverse)
-        else r"(['\"`])([A-Za-z0-9+/=]{24,})\1"
+        else r"(['\"`])([A-Za-z0-9+/=]{24,65536})\1"
     )
 
+    non_hex_b64_re = re.compile(r"[G-Zg-z]")
+    candidates_checked = 0
     for match in re.finditer(lit_pattern, norm_code):
+        candidates_checked += 1
+        if candidates_checked > 200:
+            break
         candidate = match.group(2)
         start_pos = max(0, match.start() - 40)
         prefix = norm_code[start_pos:match.start()].lower()
 
-        if any(tag in prefix for tag in ("data:image/", "data:font/", "sourcemappingurl", "integrity", "sha512-")):
+        if any(tag in prefix for tag in ("data:image/", "data:font/", "data:audio/", "data:video/", "sourcemappingurl", "integrity", "sha512-")):
             ctx_window = norm_code[max(0, match.start() - 60):min(len(norm_code), match.end() + 60)]
             if not re.search(r"\.(?:split|slice|substring|replace)\s*\(", ctx_window):
                 continue
 
+        wide_prefix = norm_code[max(0, match.start() - 120):match.start()]
+        has_near_decode_call = bool(re.search(r"\b(?:Buffer\.from|atob)\s*\(", wide_prefix))
         is_b64url_cand = "-" in candidate or "_" in candidate
-        if not is_b64url_cand or has_b64url:
-            try:
-                padded = candidate + ("=" * ((4 - len(candidate) % 4) % 4)) if is_b64url_cand else candidate
-                if len(padded) % 4 == 0:
-                    if is_b64url_cand:
-                        if not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", padded):
-                            raise ValueError("Invalid Base64URL")
-                        raw = base64.urlsafe_b64decode(padded)
-                    else:
-                        raw = base64.b64decode(padded, validate=True)
-                    verdict = verify_decoded_payload_bytes(
-                        raw, "Base64", has_url_risk_context=has_url_risk_context
-                    )
-                    if verdict:
-                        return True, verdict
-            except Exception:
-                pass
+        is_pure_hex = bool(len(candidate) >= 40 and len(candidate) % 2 == 0 and re.fullmatch(r"[0-9a-fA-F]+", candidate))
+
+        if not is_pure_hex and (not is_b64url_cand or has_b64url):
+            # OSSF package-analysis Base64 filter: require mixed case + non-hex [G-Zg-z] unless explicit decode call is adjacent
+            has_mixed_case_non_hex = (
+                bool(non_hex_b64_re.search(candidate))
+                and any("A" <= c <= "Z" for c in candidate)
+                and any("a" <= c <= "z" for c in candidate)
+            )
+            if has_mixed_case_non_hex or has_near_decode_call:
+                try:
+                    padded = candidate + ("=" * ((4 - len(candidate) % 4) % 4)) if is_b64url_cand else candidate
+                    if len(padded) % 4 == 0:
+                        if is_b64url_cand:
+                            if not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", padded):
+                                raise ValueError("Invalid Base64URL")
+                            raw = base64.urlsafe_b64decode(padded)
+                        else:
+                            raw = base64.b64decode(padded, validate=True)
+                        verdict = verify_decoded_payload_bytes(
+                            raw,
+                            "Base64",
+                            has_url_risk_context=has_url_risk_context,
+                            is_minified=is_minified,
+                        )
+                        if verdict:
+                            return True, verdict
+                except Exception:
+                    pass
 
         if has_reverse:
             rev_cand = candidate[::-1]
@@ -466,18 +506,24 @@ def inspect_encoded_strings(
                         raw_rev = base64.b64decode(rev_padded, validate=True)
                     if raw_rev:
                         verdict = verify_decoded_payload_bytes(
-                            raw_rev, "Reversed Base64", has_url_risk_context=has_url_risk_context
+                            raw_rev,
+                            "Reversed Base64",
+                            has_url_risk_context=has_url_risk_context,
+                            is_minified=is_minified,
                         )
                         if verdict:
                             return True, verdict
                 except Exception:
                     pass
 
-        if len(candidate) >= 40 and len(candidate) % 2 == 0 and re.fullmatch(r"[0-9a-fA-F]+", candidate):
+        if is_pure_hex:
             try:
                 raw_hex = bytes.fromhex(candidate)
                 verdict = verify_decoded_payload_bytes(
-                    raw_hex, "Hexadecimal", has_url_risk_context=has_url_risk_context
+                    raw_hex,
+                    "Hexadecimal",
+                    has_url_risk_context=has_url_risk_context,
+                    is_minified=is_minified,
                 )
                 if verdict:
                     return True, verdict
@@ -641,7 +687,11 @@ def classify_sensitive_host_path(norm_code: str) -> Tuple[int, Optional[str]]:
             return 1, dm.group(0)[:80]
 
     tier2_static_re = re.compile(
-        r"(['\"`])[^'\"`\n]*(?:\.npmrc|\.aws[/\\]+credentials|\.kube[/\\]+config|\.docker[/\\]+config\.json)\b[^'\"`\n]*\1",
+        r"(['\"`])[^'\"`\n]*(?:"
+        r"\.npmrc|\.aws[/\\]+credentials|\.kube[/\\]+config|\.docker[/\\]+config\.json|"
+        r"\.claude[/\\]+mcp\.json|\.claude\.json|\.cursor[/\\]+(?:settings|mcp)\.json|"
+        r"\.config[/\\]+gh[/\\]+hosts\.yml"
+        r")\b[^'\"`\n]*\1",
         re.IGNORECASE,
     )
     m2 = tier2_static_re.search(norm_code)
@@ -653,6 +703,9 @@ def classify_sensitive_host_path(norm_code: str) -> Tuple[int, Optional[str]]:
         rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.aws\1[^;\n]{{0,60}}?(['\"`])credentials\2",
         rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.kube\1[^;\n]{{0,60}}?(['\"`])config\2",
         rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.docker\1[^;\n]{{0,60}}?(['\"`])config\.json\2",
+        rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.claude\.json\1",
+        rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.claude\1[^;\n]{{0,60}}?(['\"`])mcp\.json\2",
+        rf"{home_expr}[^;\n]{{0,180}}?(['\"`])\.cursor\1[^;\n]{{0,60}}?(['\"`])(?:settings|mcp)\.json\2",
     )
     for dp in tier2_dyn_patterns:
         dm = re.search(dp, norm_code, re.IGNORECASE)
@@ -893,7 +946,7 @@ def analyze_decode_eval_flows(
                 has_linked_decode_eval = True
                 break
         for vm in vm_matches:
-            if min(abs(vm.start() - dm.end()), abs(dm.start() - em.end())) <= 800:
+            if min(abs(vm.start() - dm.end()), abs(dm.start() - vm.end())) <= 800:
                 vm_has_decode = True
                 break
 
@@ -1154,12 +1207,12 @@ def _detect_install_post_or_dns_exfil(
     return None
 
 
-def inspect_child_process_calls(
+def inspect_child_process_details(
     norm_code: str,
-) -> Tuple[bool, bool, bool, bool, bool]:
+) -> Dict[str, Any]:
     """
-    Inspects `child_process` invocations and returns:
-    `(has_spawn_sync_binding, has_cp_calls, in_dangerous_window, only_safe_tool_spawn, only_safe_build_exec)`.
+    Inspects `child_process` invocations and returns structured details including
+    GuardDog-inspired silent detached spawn and module top-level unsafe execution.
     """
     has_spawn_sync_binding = bool(
         re.search(
@@ -1192,48 +1245,103 @@ def inspect_child_process_calls(
     cp_calls = list(cp_call_re.finditer(norm_code)) if has_cp_import else []
 
     in_dangerous_window = False
+    has_silent_spawn = False
+    has_toplevel_unsafe_cp = False
     safe_tool_re = re.compile(
         r"^\(\s*(['\"`])(?:" + "|".join(re.escape(t) for t in SAFE_NON_SHELL_TOOLS) + r")\1"
     )
     lit_cmd_re = re.compile(r"^\(\s*(['\"])([^'\"\n]{1,200})\1")
     only_safe_tool_spawn = bool(cp_calls)
     only_safe_build_exec = bool(cp_calls)
+    only_non_shell_calls = bool(cp_calls)
 
     for m in cp_calls:
         win_start = max(0, m.start() - 300)
         win_end = min(len(norm_code), m.end() + 300)
+        call_args = extract_call_args_slice(norm_code, m.end() - 1, 400)
+        is_detached = bool(re.search(r"\bdetached\s*:\s*true\b", call_args, re.IGNORECASE))
+        is_hidden_io = bool(
+            re.search(
+                r"\bstdio\s*:\s*(?:['\"`]ignore['\"`]|\[(?:\s*['\"`]ignore['\"`]\s*,?){1,3}\])|"
+                r"\bwindowsHide\s*:\s*true\b",
+                call_args,
+                re.IGNORECASE,
+            )
+        )
+        if is_detached and is_hidden_io:
+            has_silent_spawn = True
+            only_safe_tool_spawn = False
+            only_safe_build_exec = False
+            only_non_shell_calls = False
+
         if DANGEROUS_SHELL_ARG_REGEX.search(norm_code[win_start:win_end]):
             in_dangerous_window = True
             only_safe_tool_spawn = False
             only_safe_build_exec = False
-            break
+            only_non_shell_calls = False
+            continue
+
         callee = m.group(0).rstrip("( \t\r\n").split(".")[-1].strip()
         orig_fn = destr_map.get(callee, callee)
-        call_args = extract_call_args_slice(norm_code, m.end() - 1, 320)
 
-        is_safe_non_shell = (
+        is_non_shell_variant = (
             orig_fn in ("spawn", "spawnSync", "execFile", "execFileSync")
-            and bool(safe_tool_re.match(call_args))
             and not re.search(r"\bshell\s*:\s*(?:true|['\"`]\s*[^'\"`\s][^'\"`]*['\"`])", call_args)
         )
+        if not is_non_shell_variant:
+            only_non_shell_calls = False
+
+        is_safe_non_shell = is_non_shell_variant and bool(safe_tool_re.match(call_args))
         if not is_safe_non_shell:
             only_safe_tool_spawn = False
 
+        is_safe_build_lit = False
         if not is_safe_non_shell:
             lm = lit_cmd_re.match(call_args)
             if lm:
                 cmd_lit = lm.group(2).strip()
                 chain_ok = split_safe_shell_chain(cmd_lit) is not None
-                if not (
+                is_safe_build_lit = bool(
                     chain_ok
                     and _INSTALL_SAFE_BUILD_PREFIX_RE.match(cmd_lit)
                     and not re.search(r"https?://|ftp://|\$\(|`", cmd_lit, re.IGNORECASE)
-                ):
-                    only_safe_build_exec = False
-            else:
+                )
+            if not is_safe_build_lit:
                 only_safe_build_exec = False
 
-    return has_spawn_sync_binding, bool(cp_calls), in_dangerous_window, only_safe_tool_spawn, only_safe_build_exec
+        if not is_safe_non_shell and not is_safe_build_lit and not (is_detached and is_hidden_io):
+            if is_at_top_level_scope(norm_code, m.start()):
+                has_toplevel_unsafe_cp = True
+        elif (is_detached and is_hidden_io) and is_at_top_level_scope(norm_code, m.start()):
+            has_toplevel_unsafe_cp = True
+
+    return {
+        "has_spawn_sync_binding": has_spawn_sync_binding,
+        "has_cp_calls": bool(cp_calls),
+        "in_dangerous_window": in_dangerous_window,
+        "only_safe_tool_spawn": only_safe_tool_spawn,
+        "only_safe_build_exec": only_safe_build_exec,
+        "only_non_shell_calls": only_non_shell_calls,
+        "has_silent_spawn": has_silent_spawn,
+        "has_toplevel_unsafe_cp": has_toplevel_unsafe_cp,
+    }
+
+
+def inspect_child_process_calls(
+    norm_code: str,
+) -> Tuple[bool, bool, bool, bool, bool]:
+    """
+    Backward-compatible 5-tuple wrapper over `inspect_child_process_details`.
+    Returns `(has_spawn_sync_binding, has_cp_calls, in_dangerous_window, only_safe_tool_spawn, only_safe_build_exec)`.
+    """
+    d = inspect_child_process_details(norm_code)
+    return (
+        d["has_spawn_sync_binding"],
+        d["has_cp_calls"],
+        d["in_dangerous_window"],
+        d["only_safe_tool_spawn"],
+        d["only_safe_build_exec"],
+    )
 
 
 def analyze_source_code_detailed(
@@ -1275,8 +1383,23 @@ def analyze_source_code_detailed(
                         if rel:
                             install_seeds.add(rel)
 
+    manifest_bin_files: Set[str] = set()
+    bin_field = manifest_obj.get("bin")
+    if isinstance(bin_field, str):
+        rb = resolve_pkg_script_candidate(pkg_dir, bin_field)
+        if rb:
+            manifest_bin_files.add(rb)
+    elif isinstance(bin_field, dict):
+        for bv in bin_field.values():
+            if isinstance(bv, str):
+                rb = resolve_pkg_script_candidate(pkg_dir, bv)
+                if rb:
+                    manifest_bin_files.add(rb)
+
     install_reachable_files: Set[str] = _bfs_local_imports(pkg_dir, install_seeds) if install_seeds else set()
     entrypoints.update(install_reachable_files)
+
+    per_rule_file_hits: Dict[str, Set[str]] = {}
 
     def record_l2(
         rule_key: str,
@@ -1285,7 +1408,10 @@ def analyze_source_code_detailed(
         severity: str,
         detail: str,
         in_install_ctx: bool = False,
+        rel_path: Optional[str] = None,
     ):
+        if rel_path:
+            per_rule_file_hits.setdefault(rule_key, set()).add(rel_path)
         if in_install_ctx:
             install_ctx_rules.add(rule_key)
         if rule_key not in triggered_rules or points > triggered_rules[rule_key][0]:
@@ -1450,11 +1576,64 @@ def analyze_source_code_detailed(
             non_minified_count += 1
         no_comments = strip_js_comments_safely(content)
         norm_code = normalize_js_for_static_scan(no_comments)
+        fold_res = fold_js_expressions(norm_code, is_minified=is_minified)
+        folded_code = fold_res["folded_code"]
+
+        # 0. Obfuscated/Indirect Node builtin module loading + Trojan Source + Structural obfuscators
+        obf_reqs = fold_res.get("obfuscated_builtin_requires", [])
+        if obf_reqs:
+            cross_has_exec_or_obf = True
+            sample_mod, sample_expr = obf_reqs[0]
+            record_l2(
+                "obfuscated_builtin_require",
+                45,
+                "Obfuscation / Dynamic Exec Pattern",
+                "CRITICAL",
+                f"Obfuscated/indirect import of built-in module '{sample_mod}' via `{sample_expr}` in {rel_path}",
+                rel_path=rel_path,
+            )
+
+        trojan_desc = detect_trojan_source(content, is_minified=is_minified)
+        if trojan_desc:
+            cross_has_exec_or_obf = True
+            record_l2(
+                "trojan_source_unicode",
+                45,
+                "Trojan Source / Hidden Unicode Attack",
+                "CRITICAL",
+                f"{trojan_desc} in {rel_path}",
+                rel_path=rel_path,
+            )
+
+        struct_obf = detect_structural_obfuscators(content, no_comments, is_minified=is_minified)
+        if struct_obf == "hidden_padding_exec":
+            cross_has_exec_or_obf = True
+            record_l2(
+                "inline_encoded_eval",
+                45,
+                "Obfuscation / Dynamic Exec Pattern",
+                "CRITICAL",
+                f"Hidden horizontal padding cloaking (>=400 spaces) paired with execution sink in {rel_path}",
+                rel_path=rel_path,
+            )
+        elif struct_obf == "jjencode":
+            cross_has_exec_or_obf = True
+            pkg_has_jsfuck_or_xor = True
+            record_l2(
+                "heavy_js_obfuscation",
+                40,
+                "Obfuscation / Dynamic Exec Pattern",
+                "HIGH",
+                f"JJEncode symbol-only obfuscation signature detected in {rel_path}",
+                rel_path=rel_path,
+            )
 
         # 1. Critical inline dynamic evaluation patterns (+45 CRITICAL)
         has_crit_exec = False
         for pattern, desc in SOURCE_CRITICAL_EXEC_PATTERNS:
-            if re.search(pattern, norm_code, re.IGNORECASE):
+            if re.search(pattern, norm_code, re.IGNORECASE) or (
+                folded_code != norm_code and re.search(pattern, folded_code, re.IGNORECASE)
+            ):
                 has_crit_exec = True
                 record_l2(
                     "inline_encoded_eval",
@@ -1462,10 +1641,13 @@ def analyze_source_code_detailed(
                     "Obfuscation / Dynamic Exec Pattern",
                     "CRITICAL",
                     f"{desc} detected in {rel_path}",
+                    rel_path=rel_path,
                 )
 
         # 3. Malicious Exfil / OAST / IMDS / Public IP Endpoints (+50 CRITICAL)
-        exfil_hit = find_suspicious_exfil_endpoints(norm_code)
+        exfil_hit = find_suspicious_exfil_endpoints(folded_code)
+        if not exfil_hit and folded_code != norm_code:
+            exfil_hit = find_suspicious_exfil_endpoints(norm_code)
         if exfil_hit:
             record_l2(
                 "malicious_exfil_endpoint",
@@ -1473,15 +1655,16 @@ def analyze_source_code_detailed(
                 "Suspicious Exfiltration Endpoint",
                 "CRITICAL",
                 f"Hardcoded external exfiltration/OAST/IMDS endpoint '{exfil_hit}' in {rel_path}",
+                rel_path=rel_path,
             )
         bare_bot_match = (
-            re.search(r"api\.telegram\.org/bot|discord(?:app)?\.com/api/webhooks/", norm_code, re.IGNORECASE)
+            re.search(r"api\.telegram\.org/bot|discord(?:app)?\.com/api/webhooks/", folded_code, re.IGNORECASE)
             if not exfil_hit
             else None
         )
 
         # 4. Recon + Net Sinks
-        recon_info = analyze_recon_and_net_sinks(norm_code)
+        recon_info = analyze_recon_and_net_sinks(folded_code)
         file_high_risk_recon = recon_info["high_risk_recon"]
         file_os_funcs = recon_info["os_funcs"]
         file_install_id_funcs = recon_info["install_identity_funcs"]
@@ -1502,6 +1685,7 @@ def analyze_source_code_detailed(
                 "Host Fingerprinting & Exfiltration Flow",
                 "CRITICAL",
                 f"File {rel_path} combines host/credential fingerprinting with outbound network/DNS calls",
+                rel_path=rel_path,
             )
         elif is_install_ctx and not is_minified and (file_high_risk_recon or file_install_id_funcs) and file_has_net_sink:
             record_l2(
@@ -1510,10 +1694,11 @@ def analyze_source_code_detailed(
                 "Host Fingerprinting & Exfiltration Flow",
                 "CRITICAL",
                 f"Install-time script {rel_path} pairs host/identity recon ({', '.join(sorted(file_install_id_funcs)) or 'credential/env'}) with outbound network",
+                rel_path=rel_path,
             )
 
         if is_install_ctx and not is_minified:
-            inst_exfil_reason = _detect_install_post_or_dns_exfil(norm_code, manifest, recon_info)
+            inst_exfil_reason = _detect_install_post_or_dns_exfil(folded_code, manifest, recon_info)
             if inst_exfil_reason:
                 record_l2(
                     "install_post_or_dns_exfil",
@@ -1521,12 +1706,19 @@ def analyze_source_code_detailed(
                     "Suspicious Install-Time Data Exfiltration",
                     "HIGH",
                     f"{inst_exfil_reason} in {rel_path}",
+                    rel_path=rel_path,
                 )
 
-        # 2. Decode -> Eval / Contextual VM
+        # 2. Decode -> Eval / Contextual VM (check both raw normalized code and expression-folded code)
         has_linked_decode_eval, has_risky_vm_eval = analyze_decode_eval_flows(
             norm_code, file_has_net_sink, hook_context, is_minified=is_minified
         )
+        if not (has_linked_decode_eval and has_risky_vm_eval) and folded_code != norm_code:
+            f_dec_eval, f_vm_eval = analyze_decode_eval_flows(
+                folded_code, file_has_net_sink, hook_context, is_minified=is_minified
+            )
+            has_linked_decode_eval = has_linked_decode_eval or f_dec_eval
+            has_risky_vm_eval = has_risky_vm_eval or f_vm_eval
         if has_linked_decode_eval or has_risky_vm_eval:
             detail_msg = (
                 f"Decoded Buffer/zlib/Base64 payload linked to dynamic eval/Function in {rel_path}"
@@ -1539,16 +1731,19 @@ def analyze_source_code_detailed(
                 "Obfuscation / Dynamic Exec Pattern",
                 "CRITICAL",
                 detail_msg,
+                rel_path=rel_path,
             )
 
-        # 5. Context-aware child_process inspection
-        (
-            has_spawn_sync_binding,
-            has_cp_calls,
-            in_dangerous_window,
-            only_safe_tool_spawn,
-            only_safe_build_exec,
-        ) = inspect_child_process_calls(norm_code)
+        # 5. Context-aware child_process inspection + silent spawn + top-level unsafe exec
+        cp_det = inspect_child_process_details(folded_code)
+        has_spawn_sync_binding = cp_det["has_spawn_sync_binding"]
+        has_cp_calls = cp_det["has_cp_calls"]
+        in_dangerous_window = cp_det["in_dangerous_window"]
+        only_safe_tool_spawn = cp_det["only_safe_tool_spawn"]
+        only_safe_build_exec = cp_det["only_safe_build_exec"]
+        only_non_shell_calls = cp_det["only_non_shell_calls"]
+        has_silent_spawn = cp_det["has_silent_spawn"]
+        has_toplevel_unsafe_cp = cp_det["has_toplevel_unsafe_cp"]
 
         if has_spawn_sync_binding:
             record_l2(
@@ -1557,25 +1752,57 @@ def analyze_source_code_detailed(
                 "Obfuscation / Dynamic Exec Pattern",
                 "CRITICAL",
                 f"Low-level process.binding/linkedBinding('spawn_sync') evasion in {rel_path}",
+                rel_path=rel_path,
             )
         elif has_cp_calls:
-            if in_dangerous_window or has_linked_decode_eval:
+            if in_dangerous_window or has_linked_decode_eval or has_silent_spawn:
+                reason_tag = (
+                    "Silent/detached background process spawn"
+                    if has_silent_spawn and not in_dangerous_window
+                    else "High-risk OS child_process execution with shell/encoded payload"
+                )
                 record_l2(
                     "child_process_high",
                     45,
                     "Obfuscation / Dynamic Exec Pattern",
                     "CRITICAL",
-                    f"High-risk OS child_process execution with shell/encoded payload in {rel_path}",
+                    f"{reason_tag} in {rel_path}",
+                    rel_path=rel_path,
                 )
             elif not only_safe_tool_spawn and not only_safe_build_exec and not is_minified:
-                if is_install_ctx or len(js_files) <= 3:
+                has_shebang = content.lstrip().startswith("#!")
+                is_cli_or_main_guarded = bool(
+                    rel_path in manifest_bin_files
+                    or has_shebang
+                    or re.search(r"require\.main\s*===\s*module", norm_code)
+                )
+                allow_toplevel_escalation = bool(
+                    has_toplevel_unsafe_cp
+                    and not is_cli_or_main_guarded
+                    and not (is_install_ctx and only_non_shell_calls)
+                    and (rel_path in entrypoints or is_install_ctx or len(js_files) <= 3)
+                )
+                if allow_toplevel_escalation:
+                    record_l2(
+                        "toplevel_unsafe_cp_exec",
+                        35,
+                        "Top-Level Unsafe Process Execution",
+                        "HIGH",
+                        f"Module top-level child_process execution upon import/load in {rel_path}",
+                        in_install_ctx=is_install_ctx,
+                        rel_path=rel_path,
+                    )
+                elif is_install_ctx or len(js_files) <= 3:
+                    cp_low_pts = 10 if only_non_shell_calls else 20
+                    cp_low_sev = "LOW" if only_non_shell_calls else "MEDIUM"
                     record_l2(
                         "child_process_low",
-                        20,
+                        cp_low_pts,
                         "Direct Child Process Invocation",
-                        "MEDIUM",
+                        cp_low_sev,
                         f"Direct child_process invocation in {'install-time' if is_install_ctx else 'small package'} file {rel_path}",
                         in_install_ctx=is_install_ctx,
+                        rel_path=rel_path,
                     )
 
         is_unsafe_cp = bool(has_spawn_sync_binding or (has_cp_calls and not only_safe_tool_spawn and not only_safe_build_exec))
@@ -1585,10 +1812,37 @@ def analyze_source_code_detailed(
         if file_has_net_sink:
             pkg_has_net_sink = True
 
+        # 5b. Delayed Timer / Time-Bomb Evasion (setTimeout/setInterval >= 5s)
+        if not is_minified:
+            timer_desc = detect_delayed_exec_timers(folded_code)
+            if timer_desc:
+                cross_has_exec_or_obf = True
+                record_l2(
+                    "delayed_exec_timer",
+                    40,
+                    "Delayed Timer / Time-Bomb Execution",
+                    "HIGH",
+                    f"{timer_desc} in {rel_path}",
+                    rel_path=rel_path,
+                )
+
+        # 5c. Self-Defending / Anti-Analysis Check
+        sd_desc = detect_self_defending_evasion(norm_code)
+        if sd_desc:
+            record_l2(
+                "self_defending_evasion",
+                15,
+                "Self-Defending / Anti-Analysis Check",
+                "MEDIUM",
+                f"{sd_desc} in {rel_path}",
+                in_install_ctx=is_install_ctx,
+                rel_path=rel_path,
+            )
+
         eval_check_src = re.sub(
             r"(?:\bnew\s+)?Function\s*\(\s*['\"`]return\s+this['\"`]\s*\)",
             " ",
-            norm_code,
+            folded_code,
         )
         has_file_eval_or_vm = bool(
             has_crit_exec
@@ -1611,6 +1865,7 @@ def analyze_source_code_detailed(
             or has_risky_vm_eval
             or has_spawn_sync_binding
             or in_dangerous_window
+            or has_silent_spawn
         ):
             cross_has_exec_or_obf = True
 
@@ -1628,6 +1883,7 @@ def analyze_source_code_detailed(
                 "Obfuscation / Dynamic Exec Pattern",
                 "HIGH",
                 f"{obf_desc} detected in {rel_path}",
+                rel_path=rel_path,
             )
 
         if bare_bot_match and (
@@ -1653,10 +1909,11 @@ def analyze_source_code_detailed(
                 "Suspicious Exfiltration Endpoint",
                 "CRITICAL",
                 f"Exfiltration webhook/bot endpoint '{bare_bot_match.group(0)}' paired with risky context in {rel_path}",
+                rel_path=rel_path,
             )
 
         # 7. Sensitive Host Path Targeting (Tier 1 +40, Tier 2 context-gated)
-        path_tier, path_desc = classify_sensitive_host_path(norm_code)
+        path_tier, path_desc = classify_sensitive_host_path(folded_code)
         if path_tier == 1 and path_desc:
             record_l2(
                 "sensitive_host_path",
@@ -1664,6 +1921,7 @@ def analyze_source_code_detailed(
                 "Sensitive Host Path Targeting",
                 "HIGH",
                 f"Direct reference to sensitive OS path in {rel_path}: {path_desc}",
+                rel_path=rel_path,
             )
         elif path_tier == 2 and path_desc:
             has_file_risk_context = bool(
@@ -1682,6 +1940,7 @@ def analyze_source_code_detailed(
                     "Sensitive Host Path Targeting",
                     "HIGH",
                     f"Credential/tool config path targeted alongside network/exec/obfuscation in {rel_path}: {path_desc}",
+                    rel_path=rel_path,
                 )
             else:
                 pending_tier2_paths.append((rel_path, path_desc, is_install_ctx))
@@ -1692,6 +1951,7 @@ def analyze_source_code_detailed(
                         "Config File Reference",
                         "MEDIUM",
                         f"Standalone credential/config file reference in {rel_path}: {path_desc}",
+                        rel_path=rel_path,
                     )
 
         # 8. Semantically Verified Encoded Payload Artifact (+40 HIGH)
@@ -1709,7 +1969,13 @@ def analyze_source_code_detailed(
                 or is_install_ctx
             )
         )
-        b64_flagged, b64_detail = inspect_encoded_strings(norm_code, has_url_risk_context=has_b64_url_risk_ctx)
+        b64_flagged, b64_detail = inspect_encoded_strings(
+            norm_code, has_url_risk_context=has_b64_url_risk_ctx, is_minified=is_minified
+        )
+        if not b64_flagged and folded_code != norm_code:
+            b64_flagged, b64_detail = inspect_encoded_strings(
+                folded_code, has_url_risk_context=has_b64_url_risk_ctx, is_minified=is_minified
+            )
         if b64_flagged and b64_detail:
             cross_has_exec_or_obf = True
             record_l2(
@@ -1718,6 +1984,7 @@ def analyze_source_code_detailed(
                 "Long Encoded String Artifact",
                 "HIGH",
                 f"{b64_detail} in {rel_path}",
+                rel_path=rel_path,
             )
 
         # 9. Whitespace Padding Cloaking & Windowed Entropy
@@ -1729,6 +1996,7 @@ def analyze_source_code_detailed(
                 "MEDIUM",
                 f"Suspicious horizontal whitespace padding (>=200 spaces/tabs or >=50 tabs) in {rel_path}",
                 in_install_ctx=is_install_ctx,
+                rel_path=rel_path,
             )
 
         if len(content) > 200 and file_path is not None:
@@ -1797,12 +2065,18 @@ def analyze_source_code_detailed(
 
     obf_corroborated = bool(
         pkg_has_jsfuck_or_xor
-        or pkg_has_eval_or_vm
-        or pkg_has_net_sink
-        or pkg_has_unsafe_cp
         or "whitespace_cloaking" in triggered_rules
         or "sensitive_host_path" in triggered_rules
+        or "self_defending_evasion" in triggered_rules
     )
+
+    # npm-scan FP circuit breaker: suppress low-specificity formatting/process hints
+    # when they fire pervasively (>80%) across >=10 source files in large packages.
+    if len(scan_items) >= 10:
+        for cb_rule in ("whitespace_cloaking", "child_process_low"):
+            if len(per_rule_file_hits.get(cb_rule, set())) / len(scan_items) > 0.8:
+                triggered_rules.pop(cb_rule, None)
+                install_ctx_rules.discard(cb_rule)
 
     total_l2_score = 0
     for pts, rule_name, severity, detail in triggered_rules.values():

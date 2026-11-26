@@ -4,12 +4,16 @@
 
 ## Kết quả (ngưỡng 35)
 
-| | Precision | Recall | F1 | FPR |
-|---|---|---|---|---|
-| Dataset tổng hợp (`data_gen.py`) | 100% | 100% | 100% | 0% |
-| Dữ liệu thật | 78,9% | 66,6% | 72,2% | 17,8% |
+| Tập đánh giá | Chế độ | Precision | Recall | F1 | FPR |
+|---|---|---|---|---|---|
+| Dataset tổng hợp (`data_gen.py`, 100 gói) | Đầy đủ (3 lớp) | 100,0% | 68,9% | 81,6% | 0,0% |
+| Tập thật DEV (501 gói: 251 độc, 250 sạch) | Tĩnh có cổng (`L1+L2`) | 100,0% | 65,3% | 79,0% | 0,0% |
+| Tập thật TEST (440 gói: 190 độc, 250 sạch) | Tĩnh có cổng (`L1+L2`) | 94,6% | 64,2% | 76,5% | 2,8% |
+| Bộ né tránh (`460` gói: `16` biến thể + `7` sạch) | Tĩnh (`L1+L2`) / Đầy đủ (`L1+L2+L3`) | 100,0% | 100,0% | 100,0% | 0,0% |
+| Gói sạch ngẫu nhiên npm (`240` gói unseen) | Tĩnh có cổng (`L1+L2`) | — | — | — | 0,4% |
+| Gói sạch có install hook (`167` gói long-tail unseen) | Tĩnh có cổng (`L1+L2`) | — | — | — | 24,0% |
 
-Ma trận nhầm lẫn (dữ liệu thật): TP 333, FP 89, TN 411, FN 167. Layer 1 một mình cho F1 75,2% và FPR 1,6%; Layer 3 hiện không phát hiện mẫu nào.
+Ma trận nhầm lẫn trên dữ liệu thật (ngưỡng 35): DEV `TP=164, FP=0, TN=250, FN=87`; TEST `TP=122, FP=7, TN=243, FN=68` (`L1 manifest` FPR `0,0%`). Báo cáo nền v1 trước đây (`Precision 78,9%`, `Recall 66,6%`, `F1 72,2%`, `FPR 17,8%`) được lưu tham chiếu trong `benchmark/report/baocao_benchmark.pdf`.
 
 ## Tái lập
 
@@ -39,12 +43,15 @@ Mẫu độc **không** nằm trong repo. Chỉ làm trong VM Ubuntu cô lập, 
 `bench_real.py` quét một lượt 1000 gói thật **chỉ bằng Layer 1+2** (Layer 3 và mọi lệnh tạo tiến trình bị chặn trong code, vì tập dữ liệu chứa mã độc thật). Script chia kết quả theo dev/test và ablation theo lớp; nửa test chỉ chạy với `--final`.
 
 ```bash
-python3 benchmark/bench_real.py --part dev            # chỉnh luật theo kết quả dev
-python3 benchmark/bench_real.py --part all --final    # chạy MỘT lần cuối, báo cáo test
-python3 benchmark/dataset_stats.py --latex            # thống kê dữ liệu cho báo cáo
+python3 benchmark/bench_real.py --part dev                    # đánh giá trên nửa dev (NAT tắt)
+python3 benchmark/bench_real.py --part test --final           # chạy tập test độc lập (chống rò rỉ, NAT tắt)
+python3 benchmark/bench_real.py --part all --final            # chạy gộp cả dev và test
+python3 benchmark/bench_hook_benign.py --target 240 --any-benign --random  # lấy mẫu ngẫu nhiên gói sạch npm
+python3 benchmark/bench_hook_benign.py --target 240 --random               # stress-test gói sạch có install hook
+python3 benchmark/dataset_stats.py --latex                    # thống kê dữ liệu cho báo cáo
 ```
 
-Đầu ra nằm ở `~/d04_real/logs/` (`static_*.json`, `fp_static_dev.csv`, `fn_static_dev.csv`).
+Đầu ra của `bench_real.py` nằm ở `~/d04_real/logs/` (`<tag>_dev.json`, `<tag>_test.json`, `fp_<tag>_dev.csv`, `fn_<tag>_dev.csv`); đầu ra của `bench_hook_benign.py` nằm ở `logs/` (`<tag>.json`, `<tag>_fp.csv`).
 
 ## Hạn chế
 
